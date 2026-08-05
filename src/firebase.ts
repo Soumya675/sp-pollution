@@ -10,7 +10,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { CustomerRecord, MessageLog } from './types';
+import { CustomerRecord, MessageLog, DeviceSession } from './types';
 
 // Initialize Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
@@ -23,6 +23,7 @@ export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestore
 const CUSTOMERS_COLLECTION = 'customers';
 const LOGS_COLLECTION = 'logs';
 const SETTINGS_COLLECTION = 'settings';
+const SESSIONS_COLLECTION = 'sessions';
 
 // Real-time listener for Customers
 export function subscribeToCustomers(
@@ -46,6 +47,8 @@ export function subscribeToCustomers(
           createdAt: data.createdAt || new Date().toISOString()
         });
       });
+      // Sort customers descending by createdAt so newly entered records always stay at the top
+      customers.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       onUpdate(customers);
     },
     (err) => {
@@ -53,6 +56,137 @@ export function subscribeToCustomers(
       if (onError) onError(err);
     }
   );
+}
+
+// Real-time listener for Device Sessions (Admin Panel tracking)
+export function subscribeToSessions(
+  onUpdate: (sessions: DeviceSession[]) => void,
+  onError?: (err: Error) => void
+) {
+  const colRef = collection(db, SESSIONS_COLLECTION);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const sessions: DeviceSession[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        sessions.push({
+          id: docSnap.id,
+          deviceId: data.deviceId || docSnap.id,
+          operatorName: data.operatorName || 'Operator',
+          role: data.role || 'Operator',
+          deviceName: data.deviceName || 'Device Browser',
+          browserInfo: data.browserInfo || '',
+          loginTime: data.loginTime || new Date().toISOString(),
+          lastActive: data.lastActive || new Date().toISOString(),
+          status: data.status || 'Active',
+          logoutTime: data.logoutTime
+        });
+      });
+      // Sort sessions descending by loginTime (newest sessions first)
+      sessions.sort((a, b) => new Date(b.loginTime).getTime() - new Date(a.loginTime).getTime());
+      onUpdate(sessions);
+    },
+    (err) => {
+      console.error('Error listening to sessions from Firestore:', err);
+      if (onError) onError(err);
+    }
+  );
+}
+
+// Save or Update Device Session
+export async function saveSessionToCloud(session: DeviceSession): Promise<void> {
+  const docRef = doc(db, SESSIONS_COLLECTION, session.id);
+  await setDoc(docRef, {
+    id: session.id,
+    deviceId: session.deviceId,
+    operatorName: session.operatorName,
+    role: session.role,
+    deviceName: session.deviceName,
+    browserInfo: session.browserInfo,
+    loginTime: session.loginTime,
+    lastActive: session.lastActive,
+    status: session.status,
+    logoutTime: session.logoutTime || null,
+    updatedAt: new Date().toISOString()
+  }, { merge: true });
+}
+
+// Update Session Status (e.g., Logged Out or Terminated by Admin)
+export async function updateSessionStatus(sessionId: string, status: 'Active' | 'Logged Out' | 'Terminated'): Promise<void> {
+  const docRef = doc(db, SESSIONS_COLLECTION, sessionId);
+  const now = new Date().toISOString();
+  await setDoc(docRef, {
+    status,
+    lastActive: now,
+    logoutTime: status !== 'Active' ? now : null,
+    updatedAt: now
+  }, { merge: true });
+}
+
+// Heartbeat update for active session
+export async function updateSessionHeartbeat(sessionId: string): Promise<void> {
+  const docRef = doc(db, SESSIONS_COLLECTION, sessionId);
+  await setDoc(docRef, {
+    lastActive: new Date().toISOString()
+  }, { merge: true });
+}
+
+// Delete session record from cloud
+export async function deleteSessionFromCloud(sessionId: string): Promise<void> {
+  const docRef = doc(db, SESSIONS_COLLECTION, sessionId);
+  await deleteDoc(docRef);
+}
+
+// Clear all inactive/terminated session records from cloud
+export async function clearInactiveSessionsFromCloud(): Promise<number> {
+  const colRef = collection(db, SESSIONS_COLLECTION);
+  const snapshot = await getDocs(colRef);
+  const docsToDelete: any[] = [];
+  
+  snapshot.forEach((docSnap) => {
+    const data = docSnap.data();
+    if (data.status !== 'Active') {
+      docsToDelete.push(docSnap.ref);
+    }
+  });
+
+  if (docsToDelete.length === 0) return 0;
+
+  let count = 0;
+  for (let i = 0; i < docsToDelete.length; i += 450) {
+    const chunk = docsToDelete.slice(i, i + 450);
+    const batch = writeBatch(db);
+    chunk.forEach((ref) => batch.delete(ref));
+    await batch.commit();
+    count += chunk.length;
+  }
+  return count;
+}
+
+// Clear all sessions layer logs from cloud database
+export async function clearAllSessionsFromCloud(preserveCurrentSessionId?: string): Promise<number> {
+  const colRef = collection(db, SESSIONS_COLLECTION);
+  const snapshot = await getDocs(colRef);
+  const docsToDelete: any[] = [];
+
+  snapshot.forEach((docSnap) => {
+    if (!preserveCurrentSessionId || docSnap.id !== preserveCurrentSessionId) {
+      docsToDelete.push(docSnap.ref);
+    }
+  });
+
+  if (docsToDelete.length === 0) return 0;
+
+  let count = 0;
+  for (let i = 0; i < docsToDelete.length; i += 450) {
+    const chunk = docsToDelete.slice(i, i + 450);
+    const batch = writeBatch(db);
+    chunk.forEach((ref) => batch.delete(ref));
+    await batch.commit();
+    count += chunk.length;
+  }
+  return count;
 }
 
 // Real-time listener for Message Logs
