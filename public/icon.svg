@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)"/>
+  <rect x="32" y="32" width="448" height="448" rx="100" fill="none" stroke="url(#accent)" stroke-width="8" stroke-dasharray="16 12"/>
+  <circle cx="256" cy="220" r="110" fill="url(#accent)"/>
+  <path d="M256 140 C280 180, 310 200, 310 230 C310 260, 286 280, 256 280 C226 280, 202 260, 202 230 C202 200, 232 180, 256 140 Z" fill="#ffffff" opacity="0.95"/>
+  <path d="M256 360 L180 410 L200 330 L140 280 L220 275 L256 200 L292 275 L372 280 L312 330 L332 410 Z" fill="url(#gold)"/>
+  <text x="256" y="460" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="36" fill="#ffffff" text-anchor="middle" letter-spacing="4">SP PUC CENTRE</text>
+</svg>

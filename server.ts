@@ -71,7 +71,7 @@ app.get("/api/customers", (req, res) => {
     filtered = filtered.filter(
       c => c.vehicleNumber.toLowerCase().includes(q) ||
            c.mobile.includes(q) ||
-           c.name.toLowerCase().includes(q)
+           (c.name && c.name.toLowerCase().includes(q))
     );
   }
 
@@ -98,14 +98,14 @@ app.get("/api/customers/search", (req, res) => {
   return res.json({ success: true, found: false, message: 'No record found.' });
 });
 
-// 3. Create new customer record (Stores Name, Mobile Number, Vehicle Number, PUC Expiry Date)
+// 3. Create new customer record (Stores Mobile Number, Vehicle Number, PUC Expiry Date, optional Name)
 app.post("/api/customers", (req, res) => {
   const { name, mobile, vehicleNumber, pucExpiryDate, notes } = req.body;
 
-  if (!name || !mobile || !vehicleNumber) {
+  if (!mobile || !vehicleNumber) {
     return res.status(400).json({
       success: false,
-      message: 'Name, Mobile Number, and Vehicle Number are all required.'
+      message: 'Mobile Number and Vehicle Number are required.'
     });
   }
 
@@ -114,7 +114,7 @@ app.post("/api/customers", (req, res) => {
 
   const newRecord: CustomerRecord = {
     id: `cust-${Date.now()}`,
-    name: name.trim(),
+    name: name && name.trim() ? name.trim() : undefined,
     mobile: cleanMobile,
     vehicleNumber: cleanVehicleNum,
     pucExpiryDate: pucExpiryDate ? pucExpiryDate.trim() : '',
@@ -126,7 +126,7 @@ app.post("/api/customers", (req, res) => {
   saveData(CUSTOMERS_FILE, customersStore);
   res.status(201).json({
     success: true,
-    message: 'Customer record saved successfully.',
+    message: 'Customer vehicle record saved successfully.',
     data: newRecord
   });
 });
@@ -143,7 +143,7 @@ app.put("/api/customers/:id", (req, res) => {
 
   const updatedRecord: CustomerRecord = {
     ...existing,
-    name: name ? name.trim() : existing.name,
+    name: name !== undefined ? (name ? name.trim() : undefined) : existing.name,
     mobile: mobile ? mobile.trim().replace(/[^0-9]/g, '') : existing.mobile,
     vehicleNumber: vehicleNumber ? vehicleNumber.trim().toUpperCase().replace(/\s+/g, '') : existing.vehicleNumber,
     pucExpiryDate: pucExpiryDate !== undefined ? pucExpiryDate.trim() : existing.pucExpiryDate,
@@ -188,8 +188,9 @@ app.post("/api/messages/send", (req, res) => {
     if (daysLeft === 1) daysStr = 'TOMORROW';
     if (daysLeft !== null && daysLeft < 0) daysStr = `EXPIRED (${Math.abs(daysLeft)} days ago)`;
 
+    const nameOrVeh = cust.name ? cust.name : `Vehicle Owner (${cust.vehicleNumber})`;
     const formattedMsg = message
-      .replace(/{name}/g, cust.name)
+      .replace(/{name}/g, nameOrVeh)
       .replace(/{vehicleNumber}/g, cust.vehicleNumber)
       .replace(/{mobile}/g, cust.mobile)
       .replace(/{pucExpiryDate}/g, cust.pucExpiryDate || 'N/A')
@@ -197,7 +198,7 @@ app.post("/api/messages/send", (req, res) => {
 
     const logItem: MessageLog = {
       id: `msg-${Date.now()}-${Math.floor(Math.random()*1000)}`,
-      customerName: cust.name,
+      customerName: cust.name || cust.vehicleNumber,
       vehicleNumber: cust.vehicleNumber,
       mobile: cust.mobile,
       channel: channel || 'WhatsApp',

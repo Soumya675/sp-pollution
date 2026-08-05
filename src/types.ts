@@ -1,6 +1,6 @@
 export interface CustomerRecord {
   id: string;
-  name: string;
+  name?: string;
   mobile: string;
   vehicleNumber: string;
   pucExpiryDate?: string; // YYYY-MM-DD
@@ -10,7 +10,7 @@ export interface CustomerRecord {
 
 export interface MessageLog {
   id: string;
-  customerName: string;
+  customerName?: string;
   vehicleNumber: string;
   mobile: string;
   channel: 'WhatsApp' | 'SMS' | 'Both';

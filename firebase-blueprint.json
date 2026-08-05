@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "customers": {
+      "title": "Customer",
+      "description": "Vehicle customer records with PUC expiry and details",
+      "properties": {
+        "id": { "type": "string", "description": "Customer ID" },
+        "vehicleNumber": { "type": "string", "description": "Vehicle number" },
+        "mobile": { "type": "string", "description": "Customer mobile phone number" },
+        "name": { "type": "string", "description": "Customer name" },
+        "pucExpiryDate": { "type": "string", "description": "PUC expiry date" },
+        "notes": { "type": "string", "description": "Notes" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "vehicleNumber", "mobile"]
+    },
+    "logs": {
+      "title": "MessageLog",
+      "description": "Logs of sent messages",
+      "properties": {
+        "id": { "type": "string", "description": "Log ID" },
+        "customerVehicle": { "type": "string", "description": "Vehicle number" },
+        "customerMobile": { "type": "string", "description": "Mobile number" },
+        "customerName": { "type": "string", "description": "Customer name" },
+        "pucExpiryDate": { "type": "string", "description": "Expiry date" },
+        "channel": { "type": "string", "description": "WhatsApp or SMS" },
+        "sentAt": { "type": "string", "description": "Sent timestamp" },
+        "status": { "type": "string", "description": "Status" },
+        "messageText": { "type": "string", "description": "Message content" }
+      },
+      "required": ["id", "customerVehicle", "channel", "sentAt"]
+    },
+    "settings": {
+      "title": "AppSettings",
+      "description": "App configuration",
+      "properties": {
+        "googleReviewLink": { "type": "string", "description": "Google Review URL" }
+      }
+    }
+  }
+}

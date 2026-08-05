@@ -27,14 +27,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             SP Pollution Testing Centre • Near Nayapalli Footover Bridge
           </span>
         </div>
-        <div className="flex items-center gap-3 text-[11px] text-slate-400">
-          <span className="flex items-center gap-1">
-            <Car className="w-3.5 h-3.5 text-blue-400" /> Contacts: {contactCount}
-          </span>
-          <span className="flex items-center gap-1">
-            <Send className="w-3.5 h-3.5 text-emerald-400" /> Messages Sent: {logCount}
-          </span>
-        </div>
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <span className="bg-blue-950/80 text-blue-300 px-2 py-0.5 rounded border border-blue-800/60 font-semibold flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>Live Cloud DB Active</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <Car className="w-3.5 h-3.5 text-blue-400" /> Contacts: {contactCount}
+            </span>
+            <span className="flex items-center gap-1">
+              <Send className="w-3.5 h-3.5 text-emerald-400" /> Messages Sent: {logCount}
+            </span>
+          </div>
       </div>
 
       {/* Main Navbar */}

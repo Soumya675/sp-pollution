@@ -1,0 +1,18 @@
+{
+  "short_name": "SP PUC",
+  "name": "SP Pollution Testing Centre",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512 192x192 128x128 64x64",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "display": "standalone",
+  "orientation": "portrait",
+  "description": "Govt. Approved Pollution Testing Centre customer notification, PUC renewals, and Google review management system."
+}

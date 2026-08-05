@@ -17,12 +17,18 @@ export const MessageLogsView: React.FC<MessageLogsViewProps> = ({
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
 
   const filteredLogs = logs.filter(log => {
+    if (!log) return false;
     const q = searchTerm.trim().toLowerCase();
+    const nameStr = (log.customerName || '').toLowerCase();
+    const vehStr = (log.vehicleNumber || '').toLowerCase();
+    const mobStr = log.mobile || '';
+    const msgStr = (log.message || '').toLowerCase();
+
     return (
-      log.customerName.toLowerCase().includes(q) ||
-      log.vehicleNumber.toLowerCase().includes(q) ||
-      log.mobile.includes(q) ||
-      log.message.toLowerCase().includes(q)
+      nameStr.includes(q) ||
+      vehStr.includes(q) ||
+      mobStr.includes(q) ||
+      msgStr.includes(q)
     );
   });
 
@@ -100,7 +106,7 @@ export const MessageLogsView: React.FC<MessageLogsViewProps> = ({
                       {new Date(log.sentAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-900">
-                      {log.customerName}
+                      {log.customerName || log.vehicleNumber || 'Vehicle Owner'}
                     </td>
                     <td className="py-3 px-4 font-mono font-bold text-blue-700">
                       {log.vehicleNumber}

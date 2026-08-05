@@ -4,145 +4,178 @@ import { Footer } from './components/Footer';
 import { CustomerMessagingView } from './components/CustomerMessagingView';
 import { MessageLogsView } from './components/MessageLogsView';
 import { CustomerRecord, MessageLog } from './types';
-import { INITIAL_CUSTOMERS, INITIAL_MESSAGE_LOGS } from './mockData';
+import { 
+  getLocalCustomers, 
+  saveLocalCustomers, 
+  getLocalLogs, 
+  saveLocalLogs,
+  exportBackupJSON,
+  importBackupJSON,
+  exportBackupCSV,
+  importBackupCSV,
+  generateBatchData
+} from './storage';
+import { 
+  subscribeToCustomers, 
+  subscribeToLogs, 
+  saveCustomerToCloud, 
+  deleteCustomerFromCloud, 
+  syncBulkCustomersToCloud, 
+  saveLogToCloud 
+} from './firebase';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('contacts');
-  const [customers, setCustomers] = useState<CustomerRecord[]>(INITIAL_CUSTOMERS);
-  const [logs, setLogs] = useState<MessageLog[]>(INITIAL_MESSAGE_LOGS);
+  const [customers, setCustomers] = useState<CustomerRecord[]>(() => getLocalCustomers());
+  const [logs, setLogs] = useState<MessageLog[]>(() => getLocalLogs());
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // Fetch customers and logs on load
+  // Sync state to local storage backup on every state change
   useEffect(() => {
-    fetchCustomers();
-    fetchLogs();
+    saveLocalCustomers(customers);
+  }, [customers]);
+
+  useEffect(() => {
+    saveLocalLogs(logs);
+  }, [logs]);
+
+  // Subscribe to Firebase Firestore Real-Time Updates
+  useEffect(() => {
+    setIsLoading(true);
+    
+    // Subscribe to Customers collection
+    const unsubCustomers = subscribeToCustomers((cloudCustomers) => {
+      setIsLoading(false);
+      if (cloudCustomers && cloudCustomers.length > 0) {
+        setCustomers(cloudCustomers);
+        saveLocalCustomers(cloudCustomers);
+      } else {
+        // If Firestore is empty, seed initial local customers into Firestore so all devices get them!
+        const local = getLocalCustomers();
+        if (local && local.length > 0) {
+          syncBulkCustomersToCloud(local).catch(err => console.error('Cloud seed error:', err));
+        }
+      }
+    });
+
+    // Subscribe to Message Logs collection
+    const unsubLogs = subscribeToLogs((cloudLogs) => {
+      if (cloudLogs && cloudLogs.length > 0) {
+        setLogs(cloudLogs);
+        saveLocalLogs(cloudLogs);
+      } else {
+        const localLogs = getLocalLogs();
+        if (localLogs && localLogs.length > 0) {
+          localLogs.forEach(log => saveLogToCloud(log).catch(() => {}));
+        }
+      }
+    });
+
+    return () => {
+      unsubCustomers();
+      unsubLogs();
+    };
   }, []);
 
-  const fetchCustomers = async () => {
+  // Add Customer Vehicle Record
+  const handleAddCustomer = async (newCust: { name?: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => {
+    const newItem: CustomerRecord = {
+      id: `cust-${Date.now()}`,
+      name: newCust.name ? newCust.name.trim() : undefined,
+      mobile: newCust.mobile.replace(/[^0-9]/g, ''),
+      vehicleNumber: newCust.vehicleNumber.trim().toUpperCase(),
+      pucExpiryDate: newCust.pucExpiryDate ? newCust.pucExpiryDate.trim() : '',
+      notes: newCust.notes ? newCust.notes.trim() : '',
+      createdAt: new Date().toISOString()
+    };
+
+    setCustomers(prev => [newItem, ...prev]);
+
     try {
-      setIsLoading(true);
-      const res = await fetch('/api/customers');
-      const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
-        setCustomers(data.data);
-      }
+      await saveCustomerToCloud(newItem);
     } catch (err) {
-      console.error('Failed to fetch customers:', err);
-    } finally {
-      setIsLoading(false);
+      console.error('Saved to local fallback:', err);
     }
   };
 
-  const fetchLogs = async () => {
-    try {
-      const res = await fetch('/api/messages/logs');
-      const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
-        setLogs(data.data);
+  // Update Customer Vehicle Record
+  const handleUpdateCustomer = async (id: string, updatedCust: { name?: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => {
+    let updatedRecord: CustomerRecord | null = null;
+    setCustomers(prev => prev.map(c => {
+      if (c.id === id) {
+        updatedRecord = {
+          ...c,
+          name: updatedCust.name !== undefined ? (updatedCust.name ? updatedCust.name.trim() : undefined) : c.name,
+          mobile: updatedCust.mobile.replace(/[^0-9]/g, ''),
+          vehicleNumber: updatedCust.vehicleNumber.trim().toUpperCase(),
+          pucExpiryDate: updatedCust.pucExpiryDate !== undefined ? updatedCust.pucExpiryDate.trim() : c.pucExpiryDate,
+          notes: updatedCust.notes !== undefined ? updatedCust.notes.trim() : c.notes
+        };
+        return updatedRecord;
       }
-    } catch (err) {
-      console.error('Failed to fetch logs:', err);
+      return c;
+    }));
+
+    if (updatedRecord) {
+      try {
+        await saveCustomerToCloud(updatedRecord);
+      } catch (err) {
+        console.error('Error updating customer in cloud:', err);
+      }
     }
   };
 
-  // Add Customer (Stores Name, Mobile Number, Vehicle Number, PUC Expiry Date)
-  const handleAddCustomer = async (newCust: { name: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => {
-    try {
-      const res = await fetch('/api/customers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newCust)
-      });
-      const data = await res.json();
-      if (data.success && data.data) {
-        setCustomers(prev => [data.data, ...prev]);
-      } else {
-        alert(data.message || 'Failed to save customer record.');
-      }
-    } catch (err) {
-      console.error('Error adding customer:', err);
-      // Fallback local update
-      const fallbackItem: CustomerRecord = {
-        id: `cust-${Date.now()}`,
-        name: newCust.name,
-        mobile: newCust.mobile,
-        vehicleNumber: newCust.vehicleNumber.toUpperCase(),
-        pucExpiryDate: newCust.pucExpiryDate,
-        notes: newCust.notes,
-        createdAt: new Date().toISOString()
-      };
-      setCustomers(prev => [fallbackItem, ...prev]);
-    }
-  };
-
-  // Update Customer
-  const handleUpdateCustomer = async (id: string, updatedCust: { name: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => {
-    try {
-      const res = await fetch(`/api/customers/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedCust)
-      });
-      const data = await res.json();
-      if (data.success && data.data) {
-        setCustomers(prev => prev.map(c => c.id === id ? data.data : c));
-      }
-    } catch (err) {
-      console.error('Error updating customer:', err);
-      setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updatedCust } : c));
-    }
-  };
-
-  // Delete Customer
+  // Delete Customer Record
   const handleDeleteCustomer = async (id: string) => {
+    setCustomers(prev => prev.filter(c => c.id !== id));
     try {
-      await fetch(`/api/customers/${id}`, { method: 'DELETE' });
-      setCustomers(prev => prev.filter(c => c.id !== id));
+      await deleteCustomerFromCloud(id);
     } catch (err) {
-      console.error('Error deleting customer:', err);
-      setCustomers(prev => prev.filter(c => c.id !== id));
+      console.error('Error deleting customer from cloud:', err);
     }
   };
 
   // Dispatch / Send Message (Stores in message history + returns logs)
   const handleSendMessage = async (customerIds: string[], channel: 'WhatsApp' | 'SMS' | 'Both', message: string) => {
-    try {
-      const res = await fetch('/api/messages/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerIds, channel, message })
-      });
-      const data = await res.json();
-      if (data.success && Array.isArray(data.logs)) {
-        setLogs(prev => [...data.logs, ...prev]);
-      }
-    } catch (err) {
-      console.error('Error dispatching message:', err);
-      // Fallback local log
-      const selected = customers.filter(c => customerIds.includes(c.id));
-      const newLogs: MessageLog[] = selected.map(c => ({
+    const selected = customers.filter(c => customerIds.includes(c.id));
+    
+    // Create immediate local logs
+    const newLogs: MessageLog[] = selected.map(c => {
+      const displayName = c.name ? c.name : `Vehicle Owner (${c.vehicleNumber})`;
+      const formattedMsg = message
+        .replace(/{name}/g, displayName)
+        .replace(/{vehicleNumber}/g, c.vehicleNumber)
+        .replace(/{mobile}/g, c.mobile)
+        .replace(/{pucExpiryDate}/g, c.pucExpiryDate || 'N/A');
+
+      return {
         id: `msg-${Date.now()}-${Math.floor(Math.random()*1000)}`,
-        customerName: c.name,
+        customerName: c.name || c.vehicleNumber,
         vehicleNumber: c.vehicleNumber,
         mobile: c.mobile,
         channel,
-        message,
+        message: formattedMsg,
         sentAt: new Date().toISOString(),
         status: 'Delivered'
-      }));
-      setLogs(prev => [...newLogs, ...prev]);
+      };
+    });
+
+    setLogs(prev => [...newLogs, ...prev]);
+
+    // Save logs to cloud database
+    for (const log of newLogs) {
+      try {
+        await saveLogToCloud(log);
+      } catch (err) {
+        console.error('Failed saving log to cloud:', err);
+      }
     }
   };
 
   // Clear Message Logs
   const handleClearLogs = async () => {
-    try {
-      await fetch('/api/messages/logs', { method: 'DELETE' });
-      setLogs([]);
-    } catch (err) {
-      console.error('Error clearing logs:', err);
-      setLogs([]);
-    }
+    setLogs([]);
+    saveLocalLogs([]);
   };
 
   // Resend single message
@@ -151,7 +184,6 @@ export default function App() {
     if (matchingCust) {
       handleSendMessage([matchingCust.id], log.channel, log.message);
     } else {
-      // Fallback resend log
       const resendLog: MessageLog = {
         id: `msg-${Date.now()}`,
         customerName: log.customerName,
@@ -163,7 +195,39 @@ export default function App() {
         status: 'Delivered'
       };
       setLogs(prev => [resendLog, ...prev]);
+      saveLogToCloud(resendLog).catch(() => {});
     }
+  };
+
+  // Import Database Backup JSON
+  const handleImportDatabase = (jsonText: string) => {
+    const result = importBackupJSON(jsonText);
+    if (result.success) {
+      const updatedCusts = getLocalCustomers();
+      setCustomers(updatedCusts);
+      syncBulkCustomersToCloud(updatedCusts).catch(err => console.error('Cloud sync error:', err));
+    }
+    return result;
+  };
+
+  // Import Database Backup CSV
+  const handleImportCSV = (csvText: string) => {
+    const result = importBackupCSV(csvText);
+    if (result.success) {
+      const updatedCusts = getLocalCustomers();
+      setCustomers(updatedCusts);
+      syncBulkCustomersToCloud(updatedCusts).catch(err => console.error('Cloud sync error:', err));
+    }
+    return result;
+  };
+
+  // Generate 1,000 Sample Records Batch
+  const handleGenerateBatch = (count: number = 1000) => {
+    const result = generateBatchData(count);
+    const updatedCusts = getLocalCustomers();
+    setCustomers(updatedCusts);
+    syncBulkCustomersToCloud(updatedCusts).catch(err => console.error('Cloud sync error:', err));
+    return result;
   };
 
   return (
@@ -186,6 +250,11 @@ export default function App() {
             onUpdateCustomer={handleUpdateCustomer}
             onDeleteCustomer={handleDeleteCustomer}
             onSendMessage={handleSendMessage}
+            onExportBackup={exportBackupJSON}
+            onImportBackup={handleImportDatabase}
+            onExportCSV={exportBackupCSV}
+            onImportCSV={handleImportCSV}
+            onGenerateBatch={handleGenerateBatch}
             isLoading={isLoading}
           />
         )}

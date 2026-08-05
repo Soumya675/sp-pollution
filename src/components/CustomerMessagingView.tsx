@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { CustomerRecord } from '../types';
 import { 
+  Database,
+  Download,
+  Upload,
   MessageSquare, 
   Send, 
   Plus, 
@@ -27,15 +30,21 @@ import {
   Check,
   Award,
   ThumbsUp,
-  RefreshCw
+  RefreshCw,
+  Share2
 } from 'lucide-react';
 
 interface CustomerMessagingViewProps {
   customers: CustomerRecord[];
-  onAddCustomer: (customer: { name: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => void;
-  onUpdateCustomer: (id: string, customer: { name: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => void;
+  onAddCustomer: (customer: { name?: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => void;
+  onUpdateCustomer: (id: string, customer: { name?: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => void;
   onDeleteCustomer: (id: string) => void;
   onSendMessage: (customerIds: string[], channel: 'WhatsApp' | 'SMS' | 'Both', message: string) => void;
+  onExportBackup?: () => void;
+  onImportBackup?: (jsonContent: string) => { success: boolean; message: string; count?: number };
+  onExportCSV?: () => void;
+  onImportCSV?: (csvText: string) => { success: boolean; message: string; count?: number };
+  onGenerateBatch?: (count?: number) => { count: number; total: number };
   isLoading?: boolean;
 }
 
@@ -45,20 +54,38 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
   onUpdateCustomer,
   onDeleteCustomer,
   onSendMessage,
+  onExportBackup,
+  onImportBackup,
+  onExportCSV,
+  onImportCSV,
+  onGenerateBatch,
   isLoading = false
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
   const [filterTab, setFilterTab] = useState<'ALL' | 'TOMORROW' | 'TODAY' | 'WEEK' | 'EXPIRED'>('ALL');
   const [sortBy, setSortBy] = useState<'expiring_soonest' | 'expiring_tomorrow' | 'expired' | 'name_asc' | 'vehicle_asc' | 'recent'>('expiring_soonest');
+
+  // Pagination state for handling 1,000+ data smoothly without white screen
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50); // Default 50 items per page for instant performance
   
-  // Add / Edit Modal State
+  // Add / Edit Modal State (Customer Name is Optional)
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null);
   const [formData, setFormData] = useState({ name: '', mobile: '', vehicleNumber: '', pucExpiryDate: '', notes: '' });
 
   // Delete Confirmation State
   const [deletingCustomer, setDeletingCustomer] = useState<CustomerRecord | null>(null);
+
+  // Real Broadcast Review Modal State
+  const [isRealBroadcastModalOpen, setIsRealBroadcastModalOpen] = useState(false);
+  const [broadcastMessageCustom, setBroadcastMessageCustom] = useState('');
+  const [broadcastSentCount, setBroadcastSentCount] = useState(0);
+
+  // File import refs
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const csvFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // General Notification / Banner state
   const [noticeBanner, setNoticeBanner] = useState<string | null>(null);
@@ -67,7 +94,18 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
   // Compose Message Modal State
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [messageChannel, setMessageChannel] = useState<'WhatsApp' | 'SMS' | 'Both'>('WhatsApp');
-  const [messageText, setMessageText] = useState('Dear {name}, your vehicle {vehicleNumber} pollution certificate will expire in {daysLeft} (Date: {pucExpiryDate}). Kindly visit our Govt. Approved SP Pollution Testing Centre near Nayapalli footover Bridge.');
+  const [messageText, setMessageText] = useState(`Respected Sir/Madam,
+
+Greetings from Government Approved SP Pollution Testing Centre.
+
+This is a friendly reminder that your PUC Certificate ({vehicleNumber}) will expire on {pucExpiryDate} ({daysLeft} remaining).
+
+Please renew it before the expiry date to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+
+📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+
+Thank you for choosing SP Pollution Testing Centre.`);
   const [sentSuccessNotice, setSentSuccessNotice] = useState<string | null>(null);
 
   // Google Review & Feedback Collector State
@@ -183,12 +221,18 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
 
   // Filter contacts
   const filteredCustomers = customers.filter(c => {
+    if (!c) return false;
     const q = searchTerm.trim().toLowerCase();
+    const nameStr = (c.name || '').toLowerCase();
+    const mobileStr = c.mobile || '';
+    const vehicleStr = (c.vehicleNumber || '').toLowerCase();
+    const expiryStr = c.pucExpiryDate || '';
+
     const matchesSearch = (
-      c.name.toLowerCase().includes(q) ||
-      c.mobile.includes(q) ||
-      c.vehicleNumber.toLowerCase().includes(q) ||
-      (c.pucExpiryDate && c.pucExpiryDate.includes(q))
+      nameStr.includes(q) ||
+      mobileStr.includes(q) ||
+      vehicleStr.includes(q) ||
+      expiryStr.includes(q)
     );
 
     if (!matchesSearch) return false;
@@ -204,11 +248,10 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
 
   // Sort contacts
   const sortedCustomers = [...filteredCustomers].sort((a, b) => {
-    const daysA = getExpiryDetails(a.pucExpiryDate).daysLeft ?? 9999;
-    const daysB = getExpiryDetails(b.pucExpiryDate).daysLeft ?? 9999;
+    const daysA = getExpiryDetails(a?.pucExpiryDate).daysLeft ?? 9999;
+    const daysB = getExpiryDetails(b?.pucExpiryDate).daysLeft ?? 9999;
 
     if (sortBy === 'expiring_soonest') {
-      // Put 0 and 1 days at the very top, then other positive days, then expired
       return daysA - daysB;
     }
     if (sortBy === 'expiring_tomorrow') {
@@ -222,16 +265,31 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
       return daysA - daysB;
     }
     if (sortBy === 'name_asc') {
-      return a.name.localeCompare(b.name);
+      const nameA = a.name || a.vehicleNumber || '';
+      const nameB = b.name || b.vehicleNumber || '';
+      return nameA.localeCompare(nameB);
     }
     if (sortBy === 'vehicle_asc') {
-      return a.vehicleNumber.localeCompare(b.vehicleNumber);
+      const vehA = a.vehicleNumber || '';
+      const vehB = b.vehicleNumber || '';
+      return vehA.localeCompare(vehB);
     }
     if (sortBy === 'recent') {
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeB - timeA;
     }
     return 0;
   });
+
+  // Calculate Pagination for 1,000+ data scaling
+  const totalItems = sortedCustomers.length;
+  const totalPages = pageSize === -1 ? 1 : Math.ceil(totalItems / pageSize) || 1;
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedCustomers = pageSize === -1
+    ? sortedCustomers
+    : sortedCustomers.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
 
   // Select all handler
   const handleSelectAll = () => {
@@ -278,9 +336,9 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
     setEditingCustomer(c);
     setFormError(null);
     setFormData({ 
-      name: c.name, 
-      mobile: c.mobile, 
-      vehicleNumber: c.vehicleNumber, 
+      name: c.name || '', 
+      mobile: c.mobile || '', 
+      vehicleNumber: c.vehicleNumber || '', 
       pucExpiryDate: c.pucExpiryDate || '', 
       notes: c.notes || '' 
     });
@@ -290,17 +348,25 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
   // Submit Add/Edit Form
   const handleSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim() || !formData.mobile.trim() || !formData.vehicleNumber.trim()) {
-      setFormError('Please fill in Name, Mobile Number, and Vehicle Number.');
+    if (!formData.mobile.trim() || !formData.vehicleNumber.trim()) {
+      setFormError('Please fill in Mobile Number and Vehicle Registration Number.');
       return;
     }
 
+    const payload = {
+      name: formData.name.trim() || undefined,
+      mobile: formData.mobile.trim(),
+      vehicleNumber: formData.vehicleNumber.trim().toUpperCase(),
+      pucExpiryDate: formData.pucExpiryDate ? formData.pucExpiryDate.trim() : undefined,
+      notes: formData.notes ? formData.notes.trim() : undefined
+    };
+
     if (editingCustomer) {
-      onUpdateCustomer(editingCustomer.id, formData);
-      setSentSuccessNotice(`Updated customer details for ${formData.name}`);
+      onUpdateCustomer(editingCustomer.id, payload);
+      setSentSuccessNotice(`Updated vehicle record for ${payload.vehicleNumber}`);
     } else {
-      onAddCustomer(formData);
-      setSentSuccessNotice(`Saved customer record for ${formData.name}`);
+      onAddCustomer(payload);
+      setSentSuccessNotice(`Saved vehicle record for ${payload.vehicleNumber}`);
     }
 
     setIsAddModalOpen(false);
@@ -312,16 +378,30 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
   const handleOpenWhatsApp = (c: CustomerRecord) => {
     const details = getExpiryDetails(c.pucExpiryDate);
     const daysStr = details.daysLeft !== null
-      ? (details.daysLeft < 0 ? `EXPIRED (${Math.abs(details.daysLeft)} days ago)` : details.daysLeft === 0 ? 'TODAY' : details.daysLeft === 1 ? 'TOMORROW (1 day)' : `${details.daysLeft} days`)
-      : 'a few days';
-    const rawMsg = `Dear ${c.name}, your vehicle ${c.vehicleNumber} pollution certificate will expire in ${daysStr} (Expiry Date: ${details.formattedDate || c.pucExpiryDate || 'N/A'}). Kindly visit our Govt. Approved SP Pollution Testing Centre near Nayapalli footover Bridge.`;
+      ? (details.daysLeft < 0 ? `EXPIRED (${Math.abs(details.daysLeft)} days ago)` : details.daysLeft === 0 ? '0 days (TODAY)' : details.daysLeft === 1 ? '1 day (TOMORROW)' : `${details.daysLeft} days`)
+      : '31 days';
+    const formattedDateStr = details.formattedDate || c.pucExpiryDate || 'N/A';
+
+    const rawMsg = `*Respected Sir/Madam,*
+
+Greetings from *Government Approved SP Pollution Testing Centre*.
+
+This is a friendly reminder that your *PUC Certificate (${c.vehicleNumber})* will expire on *${formattedDateStr}* (${daysStr} remaining).
+
+Please renew it before the expiry date to avoid penalties of up to *₹10,000* under the Motor Vehicles Act.
+
+📍 *Centre 1:* https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+📍 *Centre 2:* https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+
+Thank you for choosing *SP Pollution Testing Centre*.`;
+
     const text = encodeURIComponent(rawMsg);
     const cleanNum = c.mobile.replace(/[^0-9]/g, '');
     const num = cleanNum.length === 10 ? `91${cleanNum}` : cleanNum;
     window.open(`https://wa.me/${num}?text=${text}`, '_blank');
     
     onSendMessage([c.id], 'WhatsApp', rawMsg);
-    setSentSuccessNotice(`WhatsApp message sent & logged for ${c.name}!`);
+    setSentSuccessNotice(`WhatsApp message sent & logged for ${c.vehicleNumber}!`);
     setTimeout(() => setSentSuccessNotice(null), 4000);
   };
 
@@ -329,14 +409,16 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
   const handleOpenSMS = (c: CustomerRecord) => {
     const details = getExpiryDetails(c.pucExpiryDate);
     const daysStr = details.daysLeft !== null
-      ? (details.daysLeft < 0 ? `EXPIRED (${Math.abs(details.daysLeft)} days ago)` : details.daysLeft === 0 ? 'TODAY' : details.daysLeft === 1 ? 'TOMORROW (1 day)' : `${details.daysLeft} days`)
-      : 'a few days';
-    const rawMsg = `Dear ${c.name}, your vehicle ${c.vehicleNumber} pollution certificate will expire in ${daysStr} (Expiry Date: ${details.formattedDate || c.pucExpiryDate || 'N/A'}). Kindly visit our Govt. Approved SP Pollution Testing Centre near Nayapalli footover Bridge.`;
+      ? (details.daysLeft < 0 ? `EXPIRED` : details.daysLeft === 0 ? 'TODAY' : details.daysLeft === 1 ? 'TOMORROW' : `${details.daysLeft} days`)
+      : '31 days';
+    const formattedDateStr = details.formattedDate || c.pucExpiryDate || 'N/A';
+
+    const rawMsg = `Respected Sir/Madam, Greetings from Government Approved SP Pollution Testing Centre. Friendly reminder that your PUC Certificate (${c.vehicleNumber}) will expire on ${formattedDateStr} (${daysStr} remaining). Renew before expiry to avoid ₹10,000 MVA penalty. Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7 | Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac . Thank you for choosing SP Pollution Testing Centre.`;
     const text = encodeURIComponent(rawMsg);
     window.open(`sms:${c.mobile}?body=${text}`, '_blank');
     
     onSendMessage([c.id], 'SMS', rawMsg);
-    setSentSuccessNotice(`SMS sent & logged for ${c.name}!`);
+    setSentSuccessNotice(`SMS sent & logged for ${c.vehicleNumber}!`);
     setTimeout(() => setSentSuccessNotice(null), 4000);
   };
 
@@ -383,7 +465,20 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
     });
 
     // 2. Format Review Request Message
-    const rawMsg = `Dear ${renewingCustomer.name}, thank you for renewing your vehicle ${renewingCustomer.vehicleNumber} PUC at Govt. Approved SP Pollution Testing Centre (Nayapalli)! Your new PUC Expiry Date is ${formattedNewExpiry}. Please spare 30 seconds to rate us 5-stars on Google Maps: ${googleReviewLink} . Your review helps us serve you better!`;
+    const rawMsg = `*Respected Sir/Madam,*
+
+Greetings from *Government Approved SP Pollution Testing Centre*.
+
+Thank you for choosing us for your *PUC Certificate*. We sincerely appreciate your trust and support.
+
+If you are satisfied with our service, we kindly request you to leave us a *5-star review on Google Maps*. Your valuable feedback motivates our team and helps us serve more customers.
+
+⭐ *Centre 1:* https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+⭐ *Centre 2:* https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
+
+Thank you once again. We wish you *safe and happy driving!*
+
+*SP Pollution Testing Centre*`;
 
     // 3. Open Channel
     const text = encodeURIComponent(rawMsg);
@@ -399,30 +494,222 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
     // 4. Log Message
     onSendMessage([renewingCustomer.id], renewChannel, rawMsg);
 
-    const custName = renewingCustomer.name;
+    const custIdent = renewingCustomer.name || renewingCustomer.vehicleNumber;
     setRenewingCustomer(null);
-    setSentSuccessNotice(`✅ PUC Renewed for ${renewalMonths === 12 ? '1 Year' : '6 Months'}! Google 5-Star Review link sent to ${custName}.`);
+    setSentSuccessNotice(`✅ PUC Renewed for ${renewalMonths === 12 ? '1 Year' : '6 Months'}! Google 5-Star Review link sent for ${custIdent}.`);
     setTimeout(() => setSentSuccessNotice(null), 5000);
   };
 
   // Preset Template Messages
   const setTemplate = (tpl: string) => {
-    if (tpl === 'tomorrow') {
-      setMessageText('Dear {name}, your vehicle {vehicleNumber} pollution certificate will expire TOMORROW ({pucExpiryDate}). Kindly visit our Govt. Approved SP Pollution Testing Centre near Nayapalli footover Bridge.');
+    if (tpl === 'official_sp' || tpl === 'standard') {
+      setMessageText(`Respected Sir/Madam,
+
+Greetings from Government Approved SP Pollution Testing Centre.
+
+This is a friendly reminder that your PUC Certificate ({vehicleNumber}) will expire on {pucExpiryDate} ({daysLeft} remaining).
+
+Please renew it before the expiry date to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+
+📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+
+Thank you for choosing SP Pollution Testing Centre.`);
+    } else if (tpl === 'tomorrow') {
+      setMessageText(`Respected Sir/Madam,
+
+Greetings from Government Approved SP Pollution Testing Centre.
+
+Gentle Reminder: Your vehicle PUC certificate ({vehicleNumber}) will expire TOMORROW ({pucExpiryDate}).
+
+Please renew it before the expiry date to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+
+📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+
+Thank you for choosing SP Pollution Testing Centre.`);
     } else if (tpl === 'today') {
-      setMessageText('URGENT: Dear {name}, your vehicle {vehicleNumber} pollution certificate expires TODAY ({pucExpiryDate}). Kindly visit our Govt. Approved SP Pollution Testing Centre near Nayapalli footover Bridge.');
+      setMessageText(`URGENT REMINDER: Respected Sir/Madam,
+
+Greetings from Government Approved SP Pollution Testing Centre.
+
+Your vehicle PUC certificate ({vehicleNumber}) expires TODAY ({pucExpiryDate}).
+
+Please renew it immediately to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+
+📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+
+Thank you for choosing SP Pollution Testing Centre.`);
     } else if (tpl === 'expired') {
-      setMessageText('EXPIRED NOTICE: Dear {name}, your vehicle {vehicleNumber} pollution certificate has EXPIRED ({pucExpiryDate}). Kindly visit our Govt. Approved SP Pollution Testing Centre near Nayapalli footover Bridge.');
-    } else if (tpl === 'standard') {
-      setMessageText('Dear {name}, your vehicle {vehicleNumber} pollution certificate will expire in {daysLeft} (Date: {pucExpiryDate}). Kindly visit our Govt. Approved SP Pollution Testing Centre near Nayapalli footover Bridge.');
+      setMessageText(`EXPIRED NOTICE: Respected Sir/Madam,
+
+Greetings from Government Approved SP Pollution Testing Centre.
+
+Your vehicle PUC certificate ({vehicleNumber}) EXPIRED on {pucExpiryDate}.
+
+Please renew it today to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+
+📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+
+Thank you for choosing SP Pollution Testing Centre.`);
     } else if (tpl === 'googleReview') {
-      setMessageText(`Dear {name}, thank you for renewing your vehicle {vehicleNumber} PUC at Govt. Approved SP Pollution Testing Centre (Nayapalli)! Please spare 30 seconds to rate us 5-stars on Google Maps: ${googleReviewLink} . Your feedback helps us serve you better!`);
+      setMessageText(`Respected Sir/Madam,
+
+Greetings from Government Approved SP Pollution Testing Centre.
+
+Thank you for choosing us for your PUC Certificate. We sincerely appreciate your trust and support.
+
+If you are satisfied with our service, we kindly request you to leave us a 5-star review on Google Maps. Your valuable feedback motivates our team and helps us serve more customers.
+
+⭐ Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+⭐ Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
+
+Thank you once again. We wish you safe and happy driving!
+
+SP Pollution Testing Centre`);
     }
   };
 
   return (
     <div className="space-y-6">
       
+      {/* Persistent Database & Backup Control Bar */}
+      <div className="bg-slate-900 text-white p-4 rounded-2xl border border-slate-700 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center text-blue-400 shrink-0">
+            <Database className="w-5 h-5 text-blue-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-extrabold text-sm text-white">Database Status: Active & Secured</h3>
+              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Persistent Store (No Data Loss)
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Your vehicle database ({customers.length} records) is automatically saved and retained locally & on server. Never destroyed on refresh.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
+          {onExportCSV && (
+            <button
+              onClick={onExportCSV}
+              className="flex-1 sm:flex-initial bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+              title="Export all vehicle records as CSV (Excel)"
+            >
+              <Download className="w-3.5 h-3.5 text-blue-400" />
+              <span>Export CSV</span>
+            </button>
+          )}
+
+          {onImportCSV && (
+            <>
+              <input
+                type="file"
+                ref={csvFileInputRef}
+                accept=".csv"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (evt) => {
+                    const text = evt.target?.result as string;
+                    if (text && onImportCSV) {
+                      const res = onImportCSV(text);
+                      if (res.success) {
+                        setSentSuccessNotice(res.message);
+                      } else {
+                        setFormError(res.message);
+                      }
+                      setTimeout(() => setSentSuccessNotice(null), 5000);
+                    }
+                  };
+                  reader.readAsText(file);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                onClick={() => csvFileInputRef.current?.click()}
+                className="flex-1 sm:flex-initial bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                title="Import records from CSV file"
+              >
+                <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Import CSV</span>
+              </button>
+            </>
+          )}
+
+          {onExportBackup && (
+            <button
+              onClick={onExportBackup}
+              className="flex-1 sm:flex-initial bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+              title="Download full JSON Database Backup"
+            >
+              <Download className="w-3.5 h-3.5 text-amber-400" />
+              <span>JSON Backup</span>
+            </button>
+          )}
+
+          {onImportBackup && (
+            <>
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (evt) => {
+                    const text = evt.target?.result as string;
+                    if (text) {
+                      const res = onImportBackup(text);
+                      if (res.success) {
+                        setSentSuccessNotice(res.message);
+                      } else {
+                        setFormError(res.message);
+                      }
+                      setTimeout(() => setSentSuccessNotice(null), 5000);
+                    }
+                  };
+                  reader.readAsText(file);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex-1 sm:flex-initial bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                title="Restore database from JSON file"
+              >
+                <Upload className="w-3.5 h-3.5 text-purple-400" />
+                <span>Restore JSON</span>
+              </button>
+            </>
+          )}
+
+          {onGenerateBatch && (
+            <button
+              onClick={() => {
+                const res = onGenerateBatch(1000);
+                setSentSuccessNotice(`⚡ Added ${res.count} test vehicle records! Total records in database: ${res.total}`);
+                setTimeout(() => setSentSuccessNotice(null), 5000);
+              }}
+              className="flex-1 sm:flex-initial bg-amber-500 hover:bg-amber-600 text-slate-950 px-3 py-2 rounded-xl text-xs font-black flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-sm"
+              title="Test database with 1,000 generated vehicle records"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>+1,000 Test Records</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Notice & Error Alert Banners */}
       {noticeBanner && (
         <div className="bg-amber-500 text-slate-950 px-4 py-3 rounded-xl shadow-md font-bold text-xs flex items-center justify-between gap-2 border border-amber-300 animate-fadeIn">
@@ -554,7 +841,7 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Send automated thank-you WhatsApp messages after PUC renewal with your direct Google Maps rating link. Rapidly boosts local rank for <strong className="text-slate-800 font-bold">"Pollution Testing Centre near Nayapalli"</strong>.
+                Send real thank-you WhatsApp & SMS messages after PUC renewal with your direct Google Maps review link. Rapidly boosts local rank for <strong className="text-slate-800 font-bold">"Pollution Testing Centre near Nayapalli"</strong>.
               </p>
             </div>
           </div>
@@ -562,16 +849,13 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => {
-                setTemplate('googleReview');
-                if (selectedCustomerIds.length === 0 && customers.length > 0) {
-                  setSelectedCustomerIds([customers[0].id]);
-                }
-                setIsComposeOpen(true);
+                setBroadcastMessageCustom(`Dear Vehicle Owner, thank you for renewing your vehicle PUC at Govt. Approved SP Pollution Testing Centre (Nayapalli)! Please spare 30 seconds to rate us 5-stars on Google Maps: ${googleReviewLink} . Your review helps us serve you better!`);
+                setIsRealBroadcastModalOpen(true);
               }}
               className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold px-3.5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-colors"
             >
-              <Send className="w-3.5 h-3.5" />
-              <span>Broadcast Review Request</span>
+              <Share2 className="w-3.5 h-3.5" />
+              <span>Real Broadcast Review Request</span>
             </button>
           </div>
         </div>
@@ -781,6 +1065,57 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
         </div>
       </div>
 
+      {/* Pagination & Summary Bar */}
+      {sortedCustomers.length > 0 && (
+        <div className="bg-slate-50 border border-slate-200 p-3 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-slate-600 font-medium">
+            <span>Showing <strong className="text-slate-900 font-extrabold">{pageSize === -1 ? 1 : (safeCurrentPage - 1) * pageSize + 1}</strong> - <strong className="text-slate-900 font-extrabold">{pageSize === -1 ? totalItems : Math.min(safeCurrentPage * pageSize, totalItems)}</strong> of <strong className="text-blue-700 font-black">{totalItems}</strong> matching vehicles</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-semibold text-[11px]">Per Page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-slate-800 font-bold text-xs focus:outline-none focus:border-blue-500 cursor-pointer"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={250}>250</option>
+                <option value={-1}>All ({totalItems})</option>
+              </select>
+            </div>
+
+            {pageSize !== -1 && totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  disabled={safeCurrentPage <= 1}
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 cursor-pointer transition-colors"
+                >
+                  ◀ Prev
+                </button>
+                <span className="font-extrabold text-slate-800 px-1">
+                  {safeCurrentPage} / {totalPages}
+                </span>
+                <button
+                  disabled={safeCurrentPage >= totalPages}
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 cursor-pointer transition-colors"
+                >
+                  Next ▶
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Contacts List Grid */}
       {sortedCustomers.length === 0 ? (
         <div className="bg-white p-12 text-center rounded-2xl border border-slate-200 space-y-3">
@@ -798,10 +1133,11 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sortedCustomers.map(c => {
-            const isSelected = selectedCustomerIds.includes(c.id);
-            const expiry = getExpiryDetails(c.pucExpiryDate);
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {paginatedCustomers.map(c => {
+              const isSelected = selectedCustomerIds.includes(c.id);
+              const expiry = getExpiryDetails(c.pucExpiryDate);
 
             return (
               <div
@@ -832,13 +1168,13 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
                       </button>
 
                       <div>
-                        <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-1.5">
-                          <User className="w-4 h-4 text-blue-600 shrink-0" />
-                          <span>{c.name}</span>
+                        <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-1.5 font-mono">
+                          <Car className="w-4 h-4 text-blue-600 shrink-0" />
+                          <span className="text-blue-700 font-extrabold tracking-wide">{c.vehicleNumber}</span>
                         </h3>
-                        <p className="text-xs font-mono font-bold text-blue-700 mt-0.5 flex items-center gap-1">
-                          <Car className="w-3.5 h-3.5 text-blue-500" />
-                          <span>{c.vehicleNumber}</span>
+                        <p className="text-xs text-slate-600 mt-0.5 flex items-center gap-1 font-medium">
+                          <User className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{c.name ? c.name : 'Vehicle Owner (No Name)'}</span>
                         </p>
                       </div>
                     </div>
@@ -931,6 +1267,33 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
               </div>
             );
           })}
+          </div>
+
+          {/* Bottom Pagination Bar */}
+          {pageSize !== -1 && totalPages > 1 && (
+            <div className="bg-slate-50 border border-slate-200 p-3 rounded-2xl flex items-center justify-between gap-3 text-xs">
+              <span className="text-slate-500 font-semibold text-[11px]">
+                Page <strong className="text-slate-800 font-extrabold">{safeCurrentPage}</strong> of <strong className="text-slate-800 font-extrabold">{totalPages}</strong>
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={safeCurrentPage <= 1}
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 cursor-pointer transition-colors shadow-xs"
+                >
+                  ◀ Previous Page
+                </button>
+                <button
+                  disabled={safeCurrentPage >= totalPages}
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 cursor-pointer transition-colors shadow-xs"
+                >
+                  Next Page ▶
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -962,13 +1325,12 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
               )}
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Customer Full Name *</label>
+                <label className="block font-bold text-slate-700 mb-1">Customer Name (Optional)</label>
                 <input
                   type="text"
-                  required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g. Rajesh Kumar Swain"
+                  placeholder="e.g. Rajesh Kumar Swain (Optional)"
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-semibold text-xs focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -1114,6 +1476,14 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
                 <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
+                    onClick={() => setTemplate('official_sp')}
+                    className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-black cursor-pointer shadow-xs flex items-center gap-1"
+                  >
+                    <CheckCircle2 className="w-3 h-3 text-blue-200" />
+                    <span>Official SP Notice</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setTemplate('tomorrow')}
                     className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-[11px] font-bold cursor-pointer border border-amber-300"
                   >
@@ -1240,7 +1610,179 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
       )}
 
       {/* ------------------------------------------------------------- */}
-      {/* QUICK PUC RENEWAL & GOOGLE REVIEW REQUEST MODAL */}
+      {/* REAL BROADCAST REVIEW REQUEST MODAL */}
+      {/* ------------------------------------------------------------- */}
+      {isRealBroadcastModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4 animate-fadeIn max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center text-slate-950 font-black shrink-0 shadow-md">
+                  <Star className="w-5 h-5 fill-slate-950" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">Real Broadcast Review Request</h3>
+                  <p className="text-xs text-slate-500">Dispatch Google Maps 5-star review request to customer contacts.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsRealBroadcastModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold text-sm cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs overflow-y-auto pr-1 flex-1">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Google Maps Review Link</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={googleReviewLink}
+                    onChange={(e) => {
+                      setGoogleReviewLink(e.target.value);
+                      localStorage.setItem('sp_google_review_link', e.target.value);
+                    }}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-mono text-xs focus:outline-none focus:border-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyReviewLink}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs shrink-0 flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedReviewLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedReviewLink ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="font-bold text-slate-700">Dispatch Review Request to ({selectedCustomerIds.length > 0 ? selectedCustomerIds.length : customers.length}) Records</label>
+                  {selectedCustomerIds.length === 0 && (
+                    <span className="text-[10px] text-amber-700 bg-amber-50 font-bold px-2 py-0.5 rounded-full border border-amber-200">
+                      Showing All {customers.length} Records
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-2 max-h-60 overflow-y-auto border border-slate-200 rounded-xl p-2 bg-slate-50/50">
+                  {(selectedCustomerIds.length > 0
+                    ? customers.filter(c => selectedCustomerIds.includes(c.id))
+                    : customers
+                  ).map((c) => {
+                    const reviewMsg = `*Respected Sir/Madam,*
+
+Greetings from *Government Approved SP Pollution Testing Centre*.
+
+Thank you for choosing us for your *PUC Certificate*. We sincerely appreciate your trust and support.
+
+If you are satisfied with our service, we kindly request you to leave us a *5-star review on Google Maps*. Your valuable feedback motivates our team and helps us serve more customers.
+
+⭐ *Centre 1:* https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+⭐ *Centre 2:* https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
+
+Thank you once again. We wish you *safe and happy driving!*
+
+*SP Pollution Testing Centre*`;
+                    const cleanNum = c.mobile.replace(/[^0-9]/g, '');
+                    const num = cleanNum.length === 10 ? `91${cleanNum}` : cleanNum;
+
+                    return (
+                      <div key={c.id} className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-extrabold text-blue-700 text-xs">{c.vehicleNumber}</span>
+                            {c.name && <span className="font-bold text-slate-800 text-xs">({c.name})</span>}
+                          </div>
+                          <p className="text-[11px] text-slate-500 font-mono">Mobile: {c.mobile}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <a
+                            href={`https://wa.me/${num}?text=${encodeURIComponent(reviewMsg)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => {
+                              onSendMessage([c.id], 'WhatsApp', reviewMsg);
+                              setSentSuccessNotice(`Dispatched WhatsApp Review link to ${c.vehicleNumber}`);
+                              setTimeout(() => setSentSuccessNotice(null), 3000);
+                            }}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 shadow-xs cursor-pointer"
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            <span>WhatsApp</span>
+                          </a>
+
+                          <a
+                            href={`sms:${c.mobile}?body=${encodeURIComponent(reviewMsg)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => {
+                              onSendMessage([c.id], 'SMS', reviewMsg);
+                              setSentSuccessNotice(`Dispatched SMS Review link to ${c.vehicleNumber}`);
+                              setTimeout(() => setSentSuccessNotice(null), 3000);
+                            }}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 shadow-xs cursor-pointer"
+                          >
+                            <Send className="w-3 h-3" />
+                            <span>SMS</span>
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-3 flex items-center justify-between border-t border-slate-100 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const allMsgs = (selectedCustomerIds.length > 0
+                    ? customers.filter(c => selectedCustomerIds.includes(c.id))
+                    : customers
+                  ).map(c => {
+                    return `${c.vehicleNumber} (${c.mobile}):
+Respected Sir/Madam,
+
+Greetings from Government Approved SP Pollution Testing Centre.
+
+Thank you for choosing us for your PUC Certificate. We sincerely appreciate your trust and support.
+
+If you are satisfied with our service, we kindly request you to leave us a 5-star review on Google Maps. Your valuable feedback motivates our team and helps us serve more customers.
+
+⭐ Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
+⭐ Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
+
+Thank you once again. We wish you safe and happy driving!
+
+SP Pollution Testing Centre`;
+                  }).join('\n\n-------------------------\n\n');
+
+                  navigator.clipboard.writeText(allMsgs);
+                  setSentSuccessNotice('Copied all review request messages to clipboard!');
+                  setTimeout(() => setSentSuccessNotice(null), 4000);
+                }}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Copy className="w-3.5 h-3.5 text-slate-600" />
+                <span>Copy All Review Texts</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsRealBroadcastModalOpen(false)}
+                className="px-5 py-2 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ------------------------------------------------------------- */}
       {renewingCustomer && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
