@@ -94,18 +94,18 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
   // Compose Message Modal State
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [messageChannel, setMessageChannel] = useState<'WhatsApp' | 'SMS' | 'Both'>('WhatsApp');
-  const [messageText, setMessageText] = useState(`Respected Sir/Madam,
+  const [messageText, setMessageText] = useState(`Dear Sir/Madam,
 
 Greetings from Government Approved SP Pollution Testing Centre.
 
-This is a friendly reminder that your PUC Certificate ({vehicleNumber}) will expire on {pucExpiryDate} ({daysLeft} remaining).
+This is a friendly reminder that your vehicle {vehicleNumber} PUC Certificate will expire on {pucExpiryDate} ({daysLeft} remaining).
 
-Please renew it before the expiry date to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+Kindly visit our Government Approved SP Pollution Testing Centre, near Nayapalli Foot Over Bridge, Bhubaneswar, to renew your PUC Certificate at the earliest and avoid penalties under the Motor Vehicles Act.
 
 📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
-📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
 
-Thank you for choosing SP Pollution Testing Centre.`);
+Thank you!`);
   const [sentSuccessNotice, setSentSuccessNotice] = useState<string | null>(null);
 
   // Google Review & Feedback Collector State
@@ -120,6 +120,16 @@ Thank you for choosing SP Pollution Testing Centre.`);
   const [renewingCustomer, setRenewingCustomer] = useState<CustomerRecord | null>(null);
   const [renewalMonths, setRenewalMonths] = useState<number>(12); // Default 1 Year
   const [renewChannel, setRenewChannel] = useState<'WhatsApp' | 'SMS' | 'Both'>('WhatsApp');
+
+  // Automated Batch Message Dispatcher Queue State
+  const [isBatchDispatcherOpen, setIsBatchDispatcherOpen] = useState(false);
+  const [batchQueue, setBatchQueue] = useState<{
+    customer: CustomerRecord;
+    formattedMsg: string;
+    channel: 'WhatsApp' | 'SMS' | 'Both';
+    status: 'pending' | 'sent' | 'skipped';
+  }[]>([]);
+  const [batchIndex, setBatchIndex] = useState(0);
 
   const handleSaveReviewLink = () => {
     if (!reviewLinkInput.trim()) return;
@@ -377,23 +387,27 @@ Thank you for choosing SP Pollution Testing Centre.`);
   // Open Single Customer WhatsApp
   const handleOpenWhatsApp = (c: CustomerRecord) => {
     const details = getExpiryDetails(c.pucExpiryDate);
-    const daysStr = details.daysLeft !== null
-      ? (details.daysLeft < 0 ? `EXPIRED (${Math.abs(details.daysLeft)} days ago)` : details.daysLeft === 0 ? '0 days (TODAY)' : details.daysLeft === 1 ? '1 day (TOMORROW)' : `${details.daysLeft} days`)
-      : '31 days';
     const formattedDateStr = details.formattedDate || c.pucExpiryDate || 'N/A';
+    
+    let statusText = `will expire on *${formattedDateStr}*`;
+    if (details.daysLeft === 0) {
+      statusText = `has *expired today (${formattedDateStr})*`;
+    } else if (details.daysLeft === 1) {
+      statusText = `will *expire tomorrow (${formattedDateStr})*`;
+    } else if (details.daysLeft !== null && details.daysLeft < 0) {
+      statusText = `has *EXPIRED on ${formattedDateStr}*`;
+    }
 
-    const rawMsg = `*Respected Sir/Madam,*
+    const rawMsg = `*Dear Sir/Madam,*
 
-Greetings from *Government Approved SP Pollution Testing Centre*.
+Your vehicle *${c.vehicleNumber}* PUC Certificate ${statusText}.
 
-This is a friendly reminder that your *PUC Certificate (${c.vehicleNumber})* will expire on *${formattedDateStr}* (${daysStr} remaining).
-
-Please renew it before the expiry date to avoid penalties of up to *₹10,000* under the Motor Vehicles Act.
+Kindly visit our *Government Approved SP Pollution Testing Centre*, near *Nayapalli Foot Over Bridge, Bhubaneswar*, to renew your PUC Certificate at the earliest and avoid penalties under the Motor Vehicles Act.
 
 📍 *Centre 1:* https://maps.app.goo.gl/p24pgEWbovgd6ZER7
-📍 *Centre 2:* https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+📍 *Centre 2:* https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
 
-Thank you for choosing *SP Pollution Testing Centre*.`;
+*Thank you!*`;
 
     const text = encodeURIComponent(rawMsg);
     const cleanNum = c.mobile.replace(/[^0-9]/g, '');
@@ -408,18 +422,66 @@ Thank you for choosing *SP Pollution Testing Centre*.`;
   // Open Single Customer SMS
   const handleOpenSMS = (c: CustomerRecord) => {
     const details = getExpiryDetails(c.pucExpiryDate);
-    const daysStr = details.daysLeft !== null
-      ? (details.daysLeft < 0 ? `EXPIRED` : details.daysLeft === 0 ? 'TODAY' : details.daysLeft === 1 ? 'TOMORROW' : `${details.daysLeft} days`)
-      : '31 days';
     const formattedDateStr = details.formattedDate || c.pucExpiryDate || 'N/A';
+    
+    let statusText = `will expire on ${formattedDateStr}`;
+    if (details.daysLeft === 0) {
+      statusText = `has expired today (${formattedDateStr})`;
+    } else if (details.daysLeft === 1) {
+      statusText = `will expire tomorrow (${formattedDateStr})`;
+    } else if (details.daysLeft !== null && details.daysLeft < 0) {
+      statusText = `has EXPIRED on ${formattedDateStr}`;
+    }
 
-    const rawMsg = `Respected Sir/Madam, Greetings from Government Approved SP Pollution Testing Centre. Friendly reminder that your PUC Certificate (${c.vehicleNumber}) will expire on ${formattedDateStr} (${daysStr} remaining). Renew before expiry to avoid ₹10,000 MVA penalty. Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7 | Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac . Thank you for choosing SP Pollution Testing Centre.`;
+    const rawMsg = `Dear Sir/Madam, Your vehicle ${c.vehicleNumber} PUC Certificate ${statusText}. Kindly visit our Government Approved SP Pollution Testing Centre, near Nayapalli Foot Over Bridge, Bhubaneswar to renew your PUC Certificate. Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7 | Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8 . Thank you!`;
     const text = encodeURIComponent(rawMsg);
     window.open(`sms:${c.mobile}?body=${text}`, '_blank');
     
     onSendMessage([c.id], 'SMS', rawMsg);
     setSentSuccessNotice(`SMS sent & logged for ${c.vehicleNumber}!`);
     setTimeout(() => setSentSuccessNotice(null), 4000);
+  };
+
+  // Helper to format personalized messages with custom tags and dynamic status according to expiry date
+  const formatPersonalizedMessage = (templateText: string, c: CustomerRecord) => {
+    const details = getExpiryDetails(c.pucExpiryDate);
+    const formattedDateStr = details.formattedDate || c.pucExpiryDate || 'N/A';
+
+    let statusPhrase = `will expire on ${formattedDateStr}`;
+    let daysStr = `${details.daysLeft} days`;
+
+    if (details.daysLeft === 0) {
+      statusPhrase = `has expired today (${formattedDateStr})`;
+      daysStr = '0 days (TODAY)';
+    } else if (details.daysLeft === 1) {
+      statusPhrase = `will expire tomorrow (${formattedDateStr})`;
+      daysStr = '1 day (TOMORROW)';
+    } else if (details.daysLeft !== null && details.daysLeft < 0) {
+      statusPhrase = `has EXPIRED on ${formattedDateStr}`;
+      daysStr = `EXPIRED (${Math.abs(details.daysLeft)} days ago)`;
+    } else if (details.daysLeft !== null) {
+      statusPhrase = `will expire on ${formattedDateStr} (${details.daysLeft} days remaining)`;
+      daysStr = `${details.daysLeft} days`;
+    }
+
+    let result = templateText;
+
+    // Smart replacement for fixed expiry sentences if present in template
+    result = result.replace(/has expired today \(\{pucExpiryDate\}\)/gi, statusPhrase);
+    result = result.replace(/will expire tomorrow \(\{pucExpiryDate\}\)/gi, statusPhrase);
+    result = result.replace(/will expire on \(\{pucExpiryDate\}\)/gi, statusPhrase);
+    result = result.replace(/has EXPIRED on \{pucExpiryDate\}/gi, statusPhrase);
+    result = result.replace(/will expire on \{pucExpiryDate\}/gi, statusPhrase);
+
+    // Standard tag replacements
+    result = result
+      .replace(/\{name\}/gi, 'Sir/Madam')
+      .replace(/\{vehicleNumber\}/gi, c.vehicleNumber || '')
+      .replace(/\{pucExpiryDate\}/gi, formattedDateStr)
+      .replace(/\{daysLeft\}/gi, daysStr)
+      .replace(/\{expiryStatus\}/gi, statusPhrase);
+
+    return result;
   };
 
   // Dispatch Bulk or Single Compose Message
@@ -433,11 +495,45 @@ Thank you for choosing *SP Pollution Testing Centre*.`;
       return;
     }
 
-    onSendMessage(selectedCustomerIds, messageChannel, messageText);
-    setIsComposeOpen(false);
-    
-    setSentSuccessNotice(`Message history logged & dispatched to ${selectedCustomerIds.length} contact(s)!`);
-    setTimeout(() => setSentSuccessNotice(null), 5000);
+    const selectedCustomers = customers.filter(c => selectedCustomerIds.includes(c.id));
+    if (selectedCustomers.length === 0) return;
+
+    if (selectedCustomers.length === 1) {
+      // Single customer - launch WhatsApp/SMS immediately and log to cloud
+      const c = selectedCustomers[0];
+      const formatted = formatPersonalizedMessage(messageText, c);
+      const cleanNum = c.mobile.replace(/[^0-9]/g, '');
+      const num = cleanNum.length === 10 ? `91${cleanNum}` : cleanNum;
+
+      if (messageChannel === 'WhatsApp' || messageChannel === 'Both') {
+        window.open(`https://wa.me/${num}?text=${encodeURIComponent(formatted)}`, '_blank');
+      } else {
+        window.open(`sms:${c.mobile}?body=${encodeURIComponent(formatted)}`, '_blank');
+      }
+
+      onSendMessage([c.id], messageChannel, formatted);
+      setIsComposeOpen(false);
+      setSentSuccessNotice(`✅ Message launched on ${messageChannel} for ${c.vehicleNumber} & saved to cloud!`);
+      setTimeout(() => setSentSuccessNotice(null), 5000);
+    } else {
+      // Multiple selected customers - launch Automated Batch Dispatcher Queue Modal!
+      const queueItems = selectedCustomers.map(c => ({
+        customer: c,
+        formattedMsg: formatPersonalizedMessage(messageText, c),
+        channel: messageChannel,
+        status: 'pending' as const
+      }));
+
+      // Log messages in background/cloud DB
+      selectedCustomers.forEach(c => {
+        onSendMessage([c.id], messageChannel, formatPersonalizedMessage(messageText, c));
+      });
+
+      setBatchQueue(queueItems);
+      setBatchIndex(0);
+      setIsComposeOpen(false);
+      setIsBatchDispatcherOpen(true);
+    }
   };
 
   // Handle Confirmation of Renewal & Review Message Dispatch
@@ -503,57 +599,51 @@ Thank you once again. We wish you *safe and happy driving!*
   // Preset Template Messages
   const setTemplate = (tpl: string) => {
     if (tpl === 'official_sp' || tpl === 'standard') {
-      setMessageText(`Respected Sir/Madam,
+      setMessageText(`Dear Sir/Madam,
 
 Greetings from Government Approved SP Pollution Testing Centre.
 
-This is a friendly reminder that your PUC Certificate ({vehicleNumber}) will expire on {pucExpiryDate} ({daysLeft} remaining).
+This is a friendly reminder that your vehicle {vehicleNumber} PUC Certificate will expire on {pucExpiryDate} ({daysLeft} remaining).
 
-Please renew it before the expiry date to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+Kindly visit our Government Approved SP Pollution Testing Centre, near Nayapalli Foot Over Bridge, Bhubaneswar, to renew your PUC Certificate at the earliest and avoid penalties under the Motor Vehicles Act.
 
 📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
-📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
 
-Thank you for choosing SP Pollution Testing Centre.`);
+Thank you!`);
     } else if (tpl === 'tomorrow') {
-      setMessageText(`Respected Sir/Madam,
+      setMessageText(`Dear Sir/Madam,
 
-Greetings from Government Approved SP Pollution Testing Centre.
+Your vehicle {vehicleNumber} PUC Certificate will expire tomorrow ({pucExpiryDate}).
 
-Gentle Reminder: Your vehicle PUC certificate ({vehicleNumber}) will expire TOMORROW ({pucExpiryDate}).
-
-Please renew it before the expiry date to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+Kindly visit our Government Approved SP Pollution Testing Centre, near Nayapalli Foot Over Bridge, Bhubaneswar, to renew your PUC Certificate at the earliest and avoid penalties under the Motor Vehicles Act.
 
 📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
-📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
 
-Thank you for choosing SP Pollution Testing Centre.`);
+Thank you!`);
     } else if (tpl === 'today') {
-      setMessageText(`URGENT REMINDER: Respected Sir/Madam,
+      setMessageText(`Dear Sir/Madam,
 
-Greetings from Government Approved SP Pollution Testing Centre.
+Your vehicle {vehicleNumber} PUC Certificate has expired today ({pucExpiryDate}).
 
-Your vehicle PUC certificate ({vehicleNumber}) expires TODAY ({pucExpiryDate}).
-
-Please renew it immediately to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+Kindly visit our Government Approved SP Pollution Testing Centre, near Nayapalli Foot Over Bridge, Bhubaneswar, to renew your PUC Certificate at the earliest and avoid penalties under the Motor Vehicles Act.
 
 📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
-📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
 
-Thank you for choosing SP Pollution Testing Centre.`);
+Thank you!`);
     } else if (tpl === 'expired') {
-      setMessageText(`EXPIRED NOTICE: Respected Sir/Madam,
+      setMessageText(`Dear Sir/Madam,
 
-Greetings from Government Approved SP Pollution Testing Centre.
+Your vehicle {vehicleNumber} PUC Certificate has EXPIRED on {pucExpiryDate}.
 
-Your vehicle PUC certificate ({vehicleNumber}) EXPIRED on {pucExpiryDate}.
-
-Please renew it today to avoid penalties of up to ₹10,000 under the Motor Vehicles Act.
+Kindly visit our Government Approved SP Pollution Testing Centre, near Nayapalli Foot Over Bridge, Bhubaneswar, to renew your PUC Certificate immediately and avoid penalties under the Motor Vehicles Act.
 
 📍 Centre 1: https://maps.app.goo.gl/p24pgEWbovgd6ZER7
-📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8?g_st=ac
+📍 Centre 2: https://maps.app.goo.gl/nTtN6vgsDrVZhFgf8
 
-Thank you for choosing SP Pollution Testing Centre.`);
+Thank you!`);
     } else if (tpl === 'googleReview') {
       setMessageText(`Respected Sir/Madam,
 
@@ -1172,10 +1262,12 @@ SP Pollution Testing Centre`);
                           <Car className="w-4 h-4 text-blue-600 shrink-0" />
                           <span className="text-blue-700 font-extrabold tracking-wide">{c.vehicleNumber}</span>
                         </h3>
-                        <p className="text-xs text-slate-600 mt-0.5 flex items-center gap-1 font-medium">
-                          <User className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{c.name ? c.name : 'Vehicle Owner (No Name)'}</span>
-                        </p>
+                        {c.name && (
+                          <p className="text-xs text-slate-600 mt-0.5 flex items-center gap-1 font-medium">
+                            <User className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{c.name}</span>
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -1323,17 +1415,6 @@ SP Pollution Testing Centre`);
                   <button type="button" onClick={() => setFormError(null)} className="text-rose-700 font-extrabold">✕</button>
                 </div>
               )}
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Customer Name (Optional)</label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g. Rajesh Kumar Swain (Optional)"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-semibold text-xs focus:outline-none focus:border-blue-500"
-                />
-              </div>
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Mobile Number *</label>
@@ -1523,12 +1604,43 @@ SP Pollution Testing Centre`);
 
               {/* Message Text Area */}
               <div>
-                <label className="block font-bold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Message Text</span>
-                  <span className="text-[10px] text-slate-400 font-normal">Tags: &#123;name&#125;, &#123;vehicleNumber&#125;, &#123;pucExpiryDate&#125;, &#123;daysLeft&#125;</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-700">Message Text</label>
+                  <div className="flex items-center gap-1 text-[10px] flex-wrap">
+                    <span className="text-slate-400 font-normal">Insert tag:</span>
+                    <button
+                      type="button"
+                      onClick={() => setMessageText(prev => prev + ' {vehicleNumber}')}
+                      className="px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-mono font-bold rounded border border-blue-200 cursor-pointer"
+                    >
+                      &#123;vehicleNumber&#125;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMessageText(prev => prev + ' {expiryStatus}')}
+                      className="px-1.5 py-0.5 bg-purple-50 hover:bg-purple-100 text-purple-700 font-mono font-bold rounded border border-purple-200 cursor-pointer"
+                      title="Auto-expands to 'will expire tomorrow (06 Aug)', 'has expired today (05 Aug)', or 'has EXPIRED on (date)'"
+                    >
+                      &#123;expiryStatus&#125;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMessageText(prev => prev + ' {pucExpiryDate}')}
+                      className="px-1.5 py-0.5 bg-amber-50 hover:bg-amber-100 text-amber-700 font-mono font-bold rounded border border-amber-200 cursor-pointer"
+                    >
+                      &#123;pucExpiryDate&#125;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMessageText(prev => prev + ' {daysLeft}')}
+                      className="px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-mono font-bold rounded border border-emerald-200 cursor-pointer"
+                    >
+                      &#123;daysLeft&#125;
+                    </button>
+                  </div>
+                </div>
                 <textarea
-                  rows={4}
+                  rows={5}
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
                   placeholder="Enter message text..."
@@ -1917,6 +2029,178 @@ SP Pollution Testing Centre`;
                   <span>Confirm Renewal & Dispatch Review Link</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* AUTOMATED BATCH MESSAGE DISPATCHER MODAL */}
+      {/* ------------------------------------------------------------- */}
+      {isBatchDispatcherOpen && batchQueue.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4 animate-fadeIn max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-black shrink-0 shadow-md">
+                  <Send className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">Automatic Message Dispatcher Queue</h3>
+                  <p className="text-xs text-slate-500">Sequential sender for {batchQueue.length} selected vehicle contacts.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsBatchDispatcherOpen(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold text-sm cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Queue Progress Bar */}
+            <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl space-y-2 shrink-0">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-extrabold text-slate-800">
+                  Contact {batchIndex + 1} of {batchQueue.length}
+                </span>
+                <span className="font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  {batchQueue.filter(item => item.status === 'sent').length} Sent • {batchQueue.filter(item => item.status === 'pending').length} Pending
+                </span>
+              </div>
+              <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                <div 
+                  className="bg-emerald-600 h-full transition-all duration-300"
+                  style={{ width: `${((batchIndex + 1) / batchQueue.length) * 100}%` }}
+                ></div>
+              </div>
+            </div>
+
+            {/* Current Target Contact Card */}
+            {batchIndex < batchQueue.length ? (
+              <div className="bg-white border-2 border-emerald-500/80 rounded-2xl p-4 space-y-3 shadow-md flex-1 overflow-y-auto">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <div>
+                    <span className="font-mono font-black text-blue-700 text-sm bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                      {batchQueue[batchIndex].customer.vehicleNumber}
+                    </span>
+                    {batchQueue[batchIndex].customer.name && (
+                      <span className="font-bold text-slate-800 text-xs ml-2">
+                        ({batchQueue[batchIndex].customer.name})
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-mono text-xs text-slate-600 font-bold">
+                    Mobile: {batchQueue[batchIndex].customer.mobile}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">Personalized Message Preview:</label>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-mono text-xs whitespace-pre-wrap leading-relaxed">
+                    {batchQueue[batchIndex].formattedMsg}
+                  </div>
+                </div>
+
+                {/* Primary Action Buttons for Current Contact */}
+                <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const item = batchQueue[batchIndex];
+                      const cleanNum = item.customer.mobile.replace(/[^0-9]/g, '');
+                      const num = cleanNum.length === 10 ? `91${cleanNum}` : cleanNum;
+                      
+                      window.open(`https://wa.me/${num}?text=${encodeURIComponent(item.formattedMsg)}`, '_blank');
+                      
+                      onSendMessage([item.customer.id], 'WhatsApp', item.formattedMsg);
+                      
+                      // Update queue state
+                      setBatchQueue(prev => prev.map((q, idx) => idx === batchIndex ? { ...q, status: 'sent' } : q));
+                      
+                      setSentSuccessNotice(`Dispatched & logged WhatsApp message for ${item.customer.vehicleNumber}!`);
+                      setTimeout(() => setSentSuccessNotice(null), 3000);
+
+                      if (batchIndex + 1 < batchQueue.length) {
+                        setBatchIndex(prev => prev + 1);
+                      }
+                    }}
+                    className="w-full sm:flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    <span>Send WhatsApp & Next ▶</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const item = batchQueue[batchIndex];
+                      window.open(`sms:${item.customer.mobile}?body=${encodeURIComponent(item.formattedMsg)}`, '_blank');
+                      
+                      onSendMessage([item.customer.id], 'SMS', item.formattedMsg);
+                      
+                      setBatchQueue(prev => prev.map((q, idx) => idx === batchIndex ? { ...q, status: 'sent' } : q));
+                      
+                      setSentSuccessNotice(`Dispatched & logged SMS for ${item.customer.vehicleNumber}!`);
+                      setTimeout(() => setSentSuccessNotice(null), 3000);
+
+                      if (batchIndex + 1 < batchQueue.length) {
+                        setBatchIndex(prev => prev + 1);
+                      }
+                    }}
+                    className="w-full sm:flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>Send SMS & Next ▶</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (batchIndex + 1 < batchQueue.length) {
+                        setBatchIndex(prev => prev + 1);
+                      }
+                    }}
+                    className="w-full sm:w-auto py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+                  >
+                    Skip
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-2xl text-center space-y-2">
+                <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
+                <h4 className="font-extrabold text-slate-900 text-base">Batch Message Dispatch Completed!</h4>
+                <p className="text-xs text-slate-600">All {batchQueue.length} messages have been dispatched and saved to your cloud database.</p>
+              </div>
+            )}
+
+            {/* Bottom Controls */}
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const allFormatted = batchQueue.map(item => 
+                    `[${item.customer.vehicleNumber} - ${item.customer.mobile}]\n${item.formattedMsg}`
+                  ).join('\n\n-------------------------\n\n');
+
+                  navigator.clipboard.writeText(allFormatted);
+                  setSentSuccessNotice(`Copied all ${batchQueue.length} personalized messages to clipboard!`);
+                  setTimeout(() => setSentSuccessNotice(null), 4000);
+                }}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy All Messages</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsBatchDispatcherOpen(false)}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs cursor-pointer"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>
