@@ -546,6 +546,18 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
                           )}
                           <span>{s.deviceName}</span>
                         </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          {s.installedAsApp ? (
+                            <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9px] font-black uppercase px-1.5 py-0.5 rounded flex items-center gap-1">
+                              <Smartphone className="w-2.5 h-2.5 text-emerald-600" />
+                              <span>Installed App</span>
+                            </span>
+                          ) : (
+                            <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-semibold px-1.5 py-0.5 rounded">
+                              {s.appMode || 'Web Browser'}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[10px] text-slate-400 font-mono mt-0.5">
                           {s.browserInfo}
                         </p>

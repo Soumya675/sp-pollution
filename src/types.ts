@@ -34,6 +34,8 @@ export interface DeviceSession {
   latitude?: number;
   longitude?: number;
   ip?: string;
+  installedAsApp?: boolean;
+  appMode?: 'PWA Standalone' | 'Web Browser';
 }
 
 export interface UserAuth {

@@ -4,6 +4,9 @@ import { Footer } from './components/Footer';
 import { CustomerMessagingView } from './components/CustomerMessagingView';
 import { MessageLogsView } from './components/MessageLogsView';
 import { AdminPanelView } from './components/AdminPanelView';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { InstallAppModal } from './components/InstallAppModal';
+import { RealTimeInstallBanner } from './components/RealTimeInstallBanner';
 import { LocationGate, LocationData } from './components/LocationGate';
 import { CustomerRecord, MessageLog, DeviceSession, UserAuth } from './types';
 import { 
@@ -34,6 +37,7 @@ const AUTH_STORAGE_KEY = 'sp_admin_auth_v3';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('contacts');
+  const [isInstallOpen, setIsInstallOpen] = useState<boolean>(false);
   const [customers, setCustomers] = useState<CustomerRecord[]>(() => {
     const raw = getLocalCustomers();
     return [...raw].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -174,6 +178,11 @@ export default function App() {
     else if (ua.includes('Edg')) browser = 'Edge';
     else if (ua.includes('Firefox')) browser = 'Firefox';
 
+    const isStandaloneMode = 
+      window.matchMedia('(display-mode: standalone)').matches || 
+      (window.navigator as unknown as { standalone?: boolean }).standalone === true ||
+      document.referrer.includes('android-app://');
+
     const now = new Date().toISOString();
     const currentSession: DeviceSession = {
       id: userAuth.sessionId,
@@ -188,7 +197,9 @@ export default function App() {
       location: verifiedLocation.locationName,
       latitude: verifiedLocation.latitude,
       longitude: verifiedLocation.longitude,
-      ip: verifiedLocation.ip
+      ip: verifiedLocation.ip,
+      installedAsApp: Boolean(isStandaloneMode),
+      appMode: isStandaloneMode ? 'PWA Standalone' : 'Web Browser'
     };
 
     saveSessionToCloud(currentSession).catch(err => console.error('Failed saving session:', err));
@@ -199,6 +210,29 @@ export default function App() {
 
     return () => clearInterval(timer);
   }, [verifiedLocation, userAuth.role, userAuth.sessionId]);
+
+  // Handle Real-Time App Installation Event
+  const handleAppInstalled = () => {
+    if (userAuth.sessionId && verifiedLocation) {
+      saveSessionToCloud({
+        id: userAuth.sessionId,
+        deviceId: userAuth.deviceId,
+        operatorName: userAuth.role === 'Admin' ? 'Authorized Administrator' : userAuth.operatorName,
+        role: userAuth.role,
+        deviceName: `Installed PWA App`,
+        browserInfo: `PWA Standalone on Device`,
+        loginTime: new Date().toISOString(),
+        lastActive: new Date().toISOString(),
+        status: 'Active',
+        location: verifiedLocation.locationName,
+        latitude: verifiedLocation.latitude,
+        longitude: verifiedLocation.longitude,
+        ip: verifiedLocation.ip,
+        installedAsApp: true,
+        appMode: 'PWA Standalone'
+      }).catch(() => {});
+    }
+  };
 
   // Admin Passcode Unlock
   const handleAdminUnlock = (passcode: string): boolean => {
@@ -418,10 +452,11 @@ export default function App() {
           userLocation={verifiedLocation}
           userAuth={userAuth}
           onOpenAdmin={() => setActiveTab('admin')}
+          onOpenInstall={() => setIsInstallOpen(true)}
         />
 
         {/* Main Container */}
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-8">
           {activeTab === 'contacts' && (
             <CustomerMessagingView
               customers={customers}
@@ -455,6 +490,29 @@ export default function App() {
             />
           )}
         </main>
+
+        {/* Mobile Native App Bottom Navigation */}
+        <MobileBottomNav
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          contactCount={customers.length}
+          logCount={logs.length}
+          activeDeviceCount={activeDeviceCount}
+          userAuth={userAuth}
+          onOpenInstall={() => setIsInstallOpen(true)}
+        />
+
+        {/* Real-Time Floating App Install Banner */}
+        <RealTimeInstallBanner
+          onOpenModalGuide={() => setIsInstallOpen(true)}
+          onAppInstalled={handleAppInstalled}
+        />
+
+        {/* PWA App Install Modal */}
+        <InstallAppModal
+          isOpen={isInstallOpen}
+          onClose={() => setIsInstallOpen(false)}
+        />
 
         {/* Footer */}
         <Footer />

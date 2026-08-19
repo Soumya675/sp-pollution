@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.spvehicle.messaging",
+      "sha256_cert_fingerprints": [
+        "14:6D:E9:44:C5:4F:65:47:1D:AE:26:00:A0:C2:5F:4E:BE:22:98:7E:0E:3C:3F:8A:2C:94:01:DF:7B:7E:67:8A"
+      ]
+    }
+  }
+]
