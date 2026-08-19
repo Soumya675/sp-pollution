@@ -1,5 +1,5 @@
 import React from 'react';
-import { MessageSquare, Users, Clock, Send, Car, ShieldCheck, Award, MapPin, Laptop, Lock, UserCheck, Download, Smartphone } from 'lucide-react';
+import { MessageSquare, Users, Clock, Send, Car, ShieldCheck, Award, MapPin, Laptop, Lock, UserCheck, Globe } from 'lucide-react';
 import { LocationData } from './LocationGate';
 import { UserAuth } from '../types';
 
@@ -12,7 +12,6 @@ interface NavbarProps {
   userLocation?: LocationData | null;
   userAuth?: UserAuth | null;
   onOpenAdmin?: () => void;
-  onOpenInstall?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -23,8 +22,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeDeviceCount,
   userLocation,
   userAuth,
-  onOpenAdmin,
-  onOpenInstall
+  onOpenAdmin
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-slate-900 border-b border-slate-800 text-white shadow-md">
@@ -40,6 +38,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[10px] sm:text-[11px] text-slate-400">
+          <span className="bg-slate-900/90 text-amber-300 px-2 py-0.5 rounded border border-amber-500/40 font-mono font-black flex items-center gap-1 shrink-0 whitespace-nowrap">
+            <Globe className="w-3 h-3 text-amber-400 shrink-0" />
+            <span>spmsg.com</span>
+          </span>
           {userLocation && (
             <span className="bg-emerald-950/90 text-emerald-300 px-2 py-0.5 rounded border border-emerald-700/60 font-semibold flex items-center gap-1 shrink-0 whitespace-nowrap" title={`GPS: ${userLocation.latitude.toFixed(4)}, ${userLocation.longitude.toFixed(4)} • ${userLocation.locationName || ''}`}>
               <MapPin className="w-3 h-3 text-emerald-400 shrink-0" />
@@ -59,16 +61,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span className="flex items-center gap-1 bg-purple-950/80 text-purple-300 px-2 py-0.5 rounded border border-purple-800/60 font-semibold shrink-0 whitespace-nowrap" title="Total active devices online">
             <Laptop className="w-3.5 h-3.5 text-purple-400 shrink-0" /> Online: {activeDeviceCount}
           </span>
-          {onOpenInstall && (
-            <button
-              onClick={onOpenInstall}
-              className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-2.5 py-0.5 rounded-md flex items-center gap-1 text-[10px] sm:text-[11px] transition-all shadow-sm cursor-pointer shrink-0 whitespace-nowrap"
-              title="Install SP Vehicle Messaging as an App on Phone / PC"
-            >
-              <Download className="w-3 h-3" />
-              <span>Install App</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -95,7 +87,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </div>
               <p className="text-[11px] sm:text-xs text-slate-400 font-medium hidden sm:block">
-                Customer Reminder & Automated Dispatch Portal
+                spmsg.com • Customer Reminder & Automated Dispatch Portal
               </p>
             </div>
           </div>
@@ -165,23 +157,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </div>
             )}
-
-            {/* Prominent App Install Button */}
-            {onOpenInstall && (
-              <button
-                onClick={onOpenInstall}
-                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition-all cursor-pointer ml-1 border border-amber-300/60 animate-pulse"
-                title="Install SP Vehicle App to Phone / PC"
-              >
-                <Smartphone className="w-3.5 h-3.5 text-slate-950" />
-                <span>📲 Put on Phone App</span>
-              </button>
-            )}
           </div>
         </div>
       </div>
     </header>
   );
 };
-
-

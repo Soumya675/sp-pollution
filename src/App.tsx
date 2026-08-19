@@ -5,8 +5,6 @@ import { CustomerMessagingView } from './components/CustomerMessagingView';
 import { MessageLogsView } from './components/MessageLogsView';
 import { AdminPanelView } from './components/AdminPanelView';
 import { MobileBottomNav } from './components/MobileBottomNav';
-import { InstallAppModal } from './components/InstallAppModal';
-import { RealTimeInstallBanner } from './components/RealTimeInstallBanner';
 import { LocationGate, LocationData } from './components/LocationGate';
 import { CustomerRecord, MessageLog, DeviceSession, UserAuth } from './types';
 import { 
@@ -37,7 +35,6 @@ const AUTH_STORAGE_KEY = 'sp_admin_auth_v3';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('contacts');
-  const [isInstallOpen, setIsInstallOpen] = useState<boolean>(false);
   const [customers, setCustomers] = useState<CustomerRecord[]>(() => {
     const raw = getLocalCustomers();
     return [...raw].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -138,19 +135,18 @@ export default function App() {
       // Real-time remote kick check: If Admin removed / terminated this session remotely
       if (userAuth.sessionId) {
         const mySession = cloudSessions.find(s => s.id === userAuth.sessionId);
-        if (mySession && (mySession.status === 'Terminated' || mySession.status === 'Logged Out')) {
-          console.warn('Current session was terminated remotely by Admin.');
-          alert('SECURITY NOTICE: Your terminal session has been removed / terminated by the Administrator.');
-          // Generate new session ID and reset role
+        if (mySession && mySession.status === 'Terminated') {
+          // Reset session and force new login
+          alert('⚠️ Your active terminal session has been terminated by the Administrator.');
           const newSessionId = `sess-${Date.now()}`;
           localStorage.setItem('sp_current_session_id', newSessionId);
           setUserAuth(prev => ({
             ...prev,
+            sessionId: newSessionId,
             role: 'Operator',
-            operatorName: 'Terminal Operator',
-            sessionId: newSessionId
+            operatorName: 'Terminal Operator'
           }));
-          setActiveTab('contacts');
+          window.location.reload();
         }
       }
     });
@@ -162,37 +158,36 @@ export default function App() {
     };
   }, [userAuth.sessionId]);
 
-  // Register session with verified GPS location in Cloud Firestore
+  // Register Device Session into Cloud once GPS Location is Verified
   useEffect(() => {
-    if (!verifiedLocation) return;
+    if (!verifiedLocation || !userAuth.sessionId) return;
 
     const ua = navigator.userAgent;
-    let browser = 'Chrome';
-    let os = 'Windows';
-    if (ua.includes('Win')) os = 'Windows PC';
-    else if (ua.includes('Mac')) os = 'MacOS';
-    else if (ua.includes('Android')) os = 'Android Mobile';
-    else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS Mobile';
+    let deviceName = 'Desktop / Laptop';
+    if (/Android/i.test(ua)) deviceName = 'Android Mobile';
+    else if (/iPhone/i.test(ua)) deviceName = 'Apple iPhone';
+    else if (/iPad/i.test(ua)) deviceName = 'Apple iPad';
+    else if (/Macintosh/i.test(ua)) deviceName = 'Mac Computer';
+    else if (/Windows/i.test(ua)) deviceName = 'Windows PC';
 
-    if (ua.includes('Safari') && !ua.includes('Chrome')) browser = 'Safari';
-    else if (ua.includes('Edg')) browser = 'Edge';
-    else if (ua.includes('Firefox')) browser = 'Firefox';
+    let browserName = 'Web Browser';
+    if (/Chrome/i.test(ua) && !/Edg/i.test(ua)) browserName = 'Google Chrome';
+    else if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) browserName = 'Apple Safari';
+    else if (/Edg/i.test(ua)) browserName = 'Microsoft Edge';
+    else if (/Firefox/i.test(ua)) browserName = 'Mozilla Firefox';
 
-    const isStandaloneMode = 
-      window.matchMedia('(display-mode: standalone)').matches || 
-      (window.navigator as unknown as { standalone?: boolean }).standalone === true ||
-      document.referrer.includes('android-app://');
+    const isStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || 
+      (window.navigator as any).standalone === true;
 
-    const now = new Date().toISOString();
     const currentSession: DeviceSession = {
       id: userAuth.sessionId,
       deviceId: userAuth.deviceId,
       operatorName: userAuth.role === 'Admin' ? 'Authorized Administrator' : userAuth.operatorName,
       role: userAuth.role,
-      deviceName: `${userAuth.role === 'Admin' ? 'Admin' : 'Operator'} Terminal (${os})`,
-      browserInfo: `${browser} on ${os}`,
-      loginTime: now,
-      lastActive: now,
+      deviceName,
+      browserInfo: `${browserName} (${navigator.platform || 'Platform'})`,
+      loginTime: new Date().toISOString(),
+      lastActive: new Date().toISOString(),
       status: 'Active',
       location: verifiedLocation.locationName,
       latitude: verifiedLocation.latitude,
@@ -210,29 +205,6 @@ export default function App() {
 
     return () => clearInterval(timer);
   }, [verifiedLocation, userAuth.role, userAuth.sessionId]);
-
-  // Handle Real-Time App Installation Event
-  const handleAppInstalled = () => {
-    if (userAuth.sessionId && verifiedLocation) {
-      saveSessionToCloud({
-        id: userAuth.sessionId,
-        deviceId: userAuth.deviceId,
-        operatorName: userAuth.role === 'Admin' ? 'Authorized Administrator' : userAuth.operatorName,
-        role: userAuth.role,
-        deviceName: `Installed PWA App`,
-        browserInfo: `PWA Standalone on Device`,
-        loginTime: new Date().toISOString(),
-        lastActive: new Date().toISOString(),
-        status: 'Active',
-        location: verifiedLocation.locationName,
-        latitude: verifiedLocation.latitude,
-        longitude: verifiedLocation.longitude,
-        ip: verifiedLocation.ip,
-        installedAsApp: true,
-        appMode: 'PWA Standalone'
-      }).catch(() => {});
-    }
-  };
 
   // Admin Passcode Unlock
   const handleAdminUnlock = (passcode: string): boolean => {
@@ -258,175 +230,150 @@ export default function App() {
     }
     const newSessionId = `sess-${Date.now()}`;
     localStorage.setItem('sp_current_session_id', newSessionId);
-    setUserAuth(prev => ({
-      ...prev,
-      role: 'Operator',
+    setUserAuth({
+      isLoggedIn: true,
       operatorName: 'Terminal Operator',
-      sessionId: newSessionId
-    }));
+      role: 'Operator',
+      sessionId: newSessionId,
+      deviceId: localStorage.getItem('sp_device_id') || `dev-${Date.now()}`
+    });
     setActiveTab('contacts');
   };
 
-  // Add Customer Vehicle Record (New records added stay at the top!)
-  const handleAddCustomer = async (newCust: { name?: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => {
-    const normalizedVeh = newCust.vehicleNumber.trim().toUpperCase();
-    const isDuplicate = customers.some(c => c.vehicleNumber.trim().toUpperCase() === normalizedVeh);
-    if (isDuplicate) {
-      alert(`This vehicle number is already present (${normalizedVeh})`);
-      return;
-    }
+  // 1. Add Customer Record
+  const handleAddCustomer = async (recordData: Omit<CustomerRecord, 'id' | 'createdAt'>) => {
+    const cleanVehicleNum = recordData.vehicleNumber.trim().toUpperCase().replace(/\s+/g, '');
+    const cleanMobile = recordData.mobile.trim().replace(/[^0-9]/g, '');
 
-    const newItem: CustomerRecord = {
-      id: `cust-${Date.now()}`,
-      name: newCust.name ? newCust.name.trim() : undefined,
-      mobile: newCust.mobile.replace(/[^0-9]/g, ''),
-      vehicleNumber: normalizedVeh,
-      pucExpiryDate: newCust.pucExpiryDate ? newCust.pucExpiryDate.trim() : '',
-      notes: newCust.notes ? newCust.notes.trim() : '',
+    const newRecord: CustomerRecord = {
+      ...recordData,
+      id: `cust-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      vehicleNumber: cleanVehicleNum,
+      mobile: cleanMobile,
       createdAt: new Date().toISOString()
     };
 
-    setCustomers(prev => [newItem, ...prev]);
+    const updated = [newRecord, ...customers];
+    setCustomers(updated);
+    saveLocalCustomers(updated);
 
     try {
-      await saveCustomerToCloud(newItem);
+      await saveCustomerToCloud(newRecord);
     } catch (err) {
-      console.error('Saved to local fallback:', err);
+      console.error('Failed saving customer to Firestore:', err);
     }
   };
 
-  // Update Customer Vehicle Record
-  const handleUpdateCustomer = async (id: string, updatedCust: { name?: string; mobile: string; vehicleNumber: string; pucExpiryDate?: string; notes?: string }) => {
-    const normalizedVeh = updatedCust.vehicleNumber.trim().toUpperCase();
-    const isDuplicate = customers.some(c => c.id !== id && c.vehicleNumber.trim().toUpperCase() === normalizedVeh);
-    if (isDuplicate) {
-      alert(`This vehicle number is already present (${normalizedVeh})`);
-      return;
-    }
+  // 2. Update Customer Record
+  const handleUpdateCustomer = async (record: CustomerRecord) => {
+    const cleanVehicleNum = record.vehicleNumber.trim().toUpperCase().replace(/\s+/g, '');
+    const cleanMobile = record.mobile.trim().replace(/[^0-9]/g, '');
 
-    let updatedRecord: CustomerRecord | null = null;
-    const existing = customers.find(c => c.id === id);
-    if (existing) {
-      updatedRecord = {
-        ...existing,
-        name: updatedCust.name !== undefined ? (updatedCust.name ? updatedCust.name.trim() : undefined) : existing.name,
-        mobile: updatedCust.mobile.replace(/[^0-9]/g, ''),
-        vehicleNumber: normalizedVeh,
-        pucExpiryDate: updatedCust.pucExpiryDate !== undefined ? updatedCust.pucExpiryDate.trim() : existing.pucExpiryDate,
-        notes: updatedCust.notes !== undefined ? updatedCust.notes.trim() : existing.notes,
-        createdAt: new Date().toISOString()
-      };
-      setCustomers(prev => [updatedRecord!, ...prev.filter(c => c.id !== id)]);
-    }
+    const updatedRecord: CustomerRecord = {
+      ...record,
+      vehicleNumber: cleanVehicleNum,
+      mobile: cleanMobile
+    };
 
-    if (updatedRecord) {
-      try {
-        await saveCustomerToCloud(updatedRecord);
-      } catch (err) {
-        console.error('Error updating customer in cloud:', err);
-      }
+    const updated = customers.map(c => c.id === record.id ? updatedRecord : c);
+    setCustomers(updated);
+    saveLocalCustomers(updated);
+
+    try {
+      await saveCustomerToCloud(updatedRecord);
+    } catch (err) {
+      console.error('Failed updating customer in Firestore:', err);
     }
   };
 
-  // Delete Customer Record
+  // 3. Delete Customer Record
   const handleDeleteCustomer = async (id: string) => {
-    setCustomers(prev => prev.filter(c => c.id !== id));
+    const updated = customers.filter(c => c.id !== id);
+    setCustomers(updated);
+    saveLocalCustomers(updated);
+
     try {
       await deleteCustomerFromCloud(id);
     } catch (err) {
-      console.error('Error deleting customer from cloud:', err);
+      console.error('Failed deleting customer in Firestore:', err);
     }
   };
 
-  // Dispatch / Send Message (Stores in message history + returns logs)
-  const handleSendMessage = async (customerIds: string[], channel: 'WhatsApp' | 'SMS' | 'Both', message: string) => {
-    const selected = customers.filter(c => customerIds.includes(c.id));
-    
-    // Create immediate local logs
-    const newLogs: MessageLog[] = selected.map(c => {
-      const displayName = c.name ? c.name : `Vehicle Owner (${c.vehicleNumber})`;
-      const formattedMsg = message
-        .replace(/{name}/g, displayName)
-        .replace(/{vehicleNumber}/g, c.vehicleNumber)
-        .replace(/{mobile}/g, c.mobile)
-        .replace(/{pucExpiryDate}/g, c.pucExpiryDate || 'N/A');
+  // 4. Send Message (WhatsApp / SMS)
+  const handleSendMessage = async (payload: { customerIds: string[]; channel: 'WhatsApp' | 'SMS'; message: string }) => {
+    const { customerIds, channel, message } = payload;
+    const selectedCustomers = customers.filter(c => customerIds.includes(c.id));
+    const newLogs: MessageLog[] = [];
 
-      return {
-        id: `msg-${Date.now()}-${Math.floor(Math.random()*1000)}`,
-        customerName: c.name || c.vehicleNumber,
-        vehicleNumber: c.vehicleNumber,
-        mobile: c.mobile,
-        channel,
-        message: formattedMsg,
+    selectedCustomers.forEach(cust => {
+      const logItem: MessageLog = {
+        id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        customerName: cust.name || cust.vehicleNumber,
+        vehicleNumber: cust.vehicleNumber,
+        mobile: cust.mobile,
+        channel: channel,
+        message: message,
         sentAt: new Date().toISOString(),
         status: 'Delivered'
       };
+      newLogs.push(logItem);
     });
 
-    setLogs(prev => [...newLogs, ...prev]);
+    const updatedLogs = [...newLogs, ...logs];
+    setLogs(updatedLogs);
+    saveLocalLogs(updatedLogs);
 
-    // Save logs to cloud database
-    for (const log of newLogs) {
-      try {
-        await saveLogToCloud(log);
-      } catch (err) {
-        console.error('Failed saving log to cloud:', err);
-      }
-    }
+    newLogs.forEach(log => {
+      saveLogToCloud(log).catch(err => console.error('Cloud log sync error:', err));
+    });
+
+    return newLogs;
   };
 
-  // Clear Message Logs
-  const handleClearLogs = async () => {
+  // 5. Clear Message Logs
+  const handleClearLogs = () => {
     setLogs([]);
     saveLocalLogs([]);
   };
 
-  // Resend single message
+  // 6. Resend Single Message
   const handleResendMessage = (log: MessageLog) => {
-    const matchingCust = customers.find(c => c.mobile === log.mobile || c.vehicleNumber === log.vehicleNumber);
-    if (matchingCust) {
-      handleSendMessage([matchingCust.id], log.channel, log.message);
+    const cleanMobile = log.mobile.replace(/[^0-9]/g, '');
+    let formattedMobile = cleanMobile;
+    if (!formattedMobile.startsWith('91') && formattedMobile.length === 10) {
+      formattedMobile = `91${formattedMobile}`;
+    }
+
+    if (log.channel === 'WhatsApp') {
+      const url = `https://wa.me/${formattedMobile}?text=${encodeURIComponent(log.message)}`;
+      window.open(url, '_blank');
     } else {
-      const resendLog: MessageLog = {
-        id: `msg-${Date.now()}`,
-        customerName: log.customerName,
-        vehicleNumber: log.vehicleNumber,
-        mobile: log.mobile,
-        channel: log.channel,
-        message: log.message,
-        sentAt: new Date().toISOString(),
-        status: 'Delivered'
-      };
-      setLogs(prev => [resendLog, ...prev]);
-      saveLogToCloud(resendLog).catch(() => {});
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const delimiter = isIOS ? '&' : '?';
+      const url = `sms:${formattedMobile}${delimiter}body=${encodeURIComponent(log.message)}`;
+      window.location.href = url;
     }
   };
 
-  // Import Database Backup JSON
-  const handleImportDatabase = (jsonText: string) => {
-    const result = importBackupJSON(jsonText);
-    if (result.success) {
-      const updatedCusts = getLocalCustomers();
-      const sorted = [...updatedCusts].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      setCustomers(sorted);
-      syncBulkCustomersToCloud(sorted).catch(err => console.error('Cloud sync error:', err));
-    }
-    return result;
+  // 7. Import Database JSON
+  const handleImportDatabase = (importedData: CustomerRecord[]) => {
+    const sorted = [...importedData].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    setCustomers(sorted);
+    saveLocalCustomers(sorted);
+    syncBulkCustomersToCloud(sorted).catch(err => console.error('Cloud bulk sync error:', err));
   };
 
-  // Import Database Backup CSV
-  const handleImportCSV = (csvText: string) => {
-    const result = importBackupCSV(csvText);
-    if (result.success) {
-      const updatedCusts = getLocalCustomers();
-      const sorted = [...updatedCusts].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      setCustomers(sorted);
-      syncBulkCustomersToCloud(sorted).catch(err => console.error('Cloud sync error:', err));
-    }
-    return result;
+  // 8. Import CSV
+  const handleImportCSV = (importedData: CustomerRecord[]) => {
+    const combined = [...importedData, ...customers];
+    const unique = Array.from(new Map(combined.map(item => [item.vehicleNumber, item])).values());
+    const sorted = [...unique].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    setCustomers(sorted);
+    saveLocalCustomers(sorted);
+    syncBulkCustomersToCloud(sorted).catch(err => console.error('Cloud CSV sync error:', err));
   };
 
-  // Generate 1,000 Sample Records Batch
+  // 9. Generate 1000 Demo Records
   const handleGenerateBatch = (count: number = 1000) => {
     const result = generateBatchData(count);
     const updatedCusts = getLocalCustomers();
@@ -452,7 +399,6 @@ export default function App() {
           userLocation={verifiedLocation}
           userAuth={userAuth}
           onOpenAdmin={() => setActiveTab('admin')}
-          onOpenInstall={() => setIsInstallOpen(true)}
         />
 
         {/* Main Container */}
@@ -491,7 +437,7 @@ export default function App() {
           )}
         </main>
 
-        {/* Mobile Native App Bottom Navigation */}
+        {/* Mobile Bottom Navigation */}
         <MobileBottomNav
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -499,19 +445,6 @@ export default function App() {
           logCount={logs.length}
           activeDeviceCount={activeDeviceCount}
           userAuth={userAuth}
-          onOpenInstall={() => setIsInstallOpen(true)}
-        />
-
-        {/* Real-Time Floating App Install Banner */}
-        <RealTimeInstallBanner
-          onOpenModalGuide={() => setIsInstallOpen(true)}
-          onAppInstalled={handleAppInstalled}
-        />
-
-        {/* PWA App Install Modal */}
-        <InstallAppModal
-          isOpen={isInstallOpen}
-          onClose={() => setIsInstallOpen(false)}
         />
 
         {/* Footer */}
@@ -521,6 +454,3 @@ export default function App() {
     </LocationGate>
   );
 }
-
-
-
