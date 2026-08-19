@@ -87,16 +87,16 @@ export const MessageLogsView: React.FC<MessageLogsViewProps> = ({
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-700">
+            <table className="w-full min-w-[700px] text-left text-xs text-slate-700">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider font-bold text-[11px]">
                 <tr>
-                  <th className="py-3.5 px-4">Timestamp</th>
-                  <th className="py-3.5 px-4">Customer Name</th>
-                  <th className="py-3.5 px-4">Vehicle #</th>
-                  <th className="py-3.5 px-4">Mobile Number</th>
-                  <th className="py-3.5 px-4">Channel</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Timestamp</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Customer Name</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Vehicle #</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Mobile Number</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Channel</th>
                   <th className="py-3.5 px-4">Message Content</th>
-                  <th className="py-3.5 px-4 text-right">Action</th>
+                  <th className="py-3.5 px-4 text-right whitespace-nowrap">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">

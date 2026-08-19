@@ -1,6 +1,6 @@
 {
   "name": "SP Vehicle Messaging",
   "description": "Govt. Approved Pollution Testing Centre customer notification and messaging system. Store contacts and dispatch automated WhatsApp and SMS reminders.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

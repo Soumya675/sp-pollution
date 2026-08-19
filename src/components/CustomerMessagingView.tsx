@@ -63,8 +63,8 @@ export const CustomerMessagingView: React.FC<CustomerMessagingViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
-  const [filterTab, setFilterTab] = useState<'ALL' | 'TOMORROW' | 'TODAY' | 'WEEK' | 'EXPIRED'>('ALL');
-  const [sortBy, setSortBy] = useState<'expiring_soonest' | 'expiring_tomorrow' | 'expired' | 'name_asc' | 'vehicle_asc' | 'recent'>('expiring_soonest');
+  const [filterTab, setFilterTab] = useState<'ALL' | 'RECORDED_TODAY' | 'TOMORROW' | 'TODAY' | 'WEEK' | 'EXPIRED'>('ALL');
+  const [sortBy, setSortBy] = useState<'recent' | 'expiring_soonest' | 'expiring_tomorrow' | 'expired' | 'name_asc' | 'vehicle_asc'>('recent');
 
   // Pagination state for handling 1,000+ data smoothly without white screen
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -217,7 +217,65 @@ Thank you!`);
     };
   };
 
+  // Helper to format when vehicle data was entered / recorded
+  const formatEntryDateTime = (createdAt?: string) => {
+    if (!createdAt) {
+      return { isToday: false, isYesterday: false, formatted: 'Earlier Record', badgeText: '', timeStr: '', dateStr: '' };
+    }
+    const date = new Date(createdAt);
+    if (isNaN(date.getTime())) {
+      return { isToday: false, isYesterday: false, formatted: createdAt, badgeText: '', timeStr: '', dateStr: '' };
+    }
+
+    const now = new Date();
+    const isToday = 
+      date.getDate() === now.getDate() &&
+      date.getMonth() === now.getMonth() &&
+      date.getFullYear() === now.getFullYear();
+
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday =
+      date.getDate() === yesterday.getDate() &&
+      date.getMonth() === yesterday.getMonth() &&
+      date.getFullYear() === yesterday.getFullYear();
+
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    const dateStr = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+    if (isToday) {
+      return {
+        isToday: true,
+        isYesterday: false,
+        formatted: `Today (${dateStr}) at ${timeStr}`,
+        badgeText: `Added Today at ${timeStr}`,
+        timeStr,
+        dateStr
+      };
+    }
+    if (isYesterday) {
+      return {
+        isToday: false,
+        isYesterday: true,
+        formatted: `Yesterday (${dateStr}) at ${timeStr}`,
+        badgeText: `Yesterday at ${timeStr}`,
+        timeStr,
+        dateStr
+      };
+    }
+
+    return {
+      isToday: false,
+      isYesterday: false,
+      formatted: `${dateStr} at ${timeStr}`,
+      badgeText: `${dateStr} at ${timeStr}`,
+      timeStr,
+      dateStr
+    };
+  };
+
   // Counts for summary filter tabs
+  const recordedTodayCount = customers.filter(c => formatEntryDateTime(c.createdAt).isToday).length;
   const tomorrowCount = customers.filter(c => getExpiryDetails(c.pucExpiryDate).daysLeft === 1).length;
   const todayCount = customers.filter(c => getExpiryDetails(c.pucExpiryDate).daysLeft === 0).length;
   const weekCount = customers.filter(c => {
@@ -247,6 +305,7 @@ Thank you!`);
 
     if (!matchesSearch) return false;
 
+    if (filterTab === 'RECORDED_TODAY') return formatEntryDateTime(c.createdAt).isToday;
     const details = getExpiryDetails(c.pucExpiryDate);
     if (filterTab === 'TOMORROW') return details.daysLeft === 1;
     if (filterTab === 'TODAY') return details.daysLeft === 0;
@@ -256,40 +315,49 @@ Thank you!`);
     return true;
   });
 
-  // Sort contacts
+  // Sort contacts (Newly recorded / latest added vehicles on top by default)
   const sortedCustomers = [...filteredCustomers].sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+
+    if (sortBy === 'recent') {
+      return timeB - timeA;
+    }
+
     const daysA = getExpiryDetails(a?.pucExpiryDate).daysLeft ?? 9999;
     const daysB = getExpiryDetails(b?.pucExpiryDate).daysLeft ?? 9999;
 
     if (sortBy === 'expiring_soonest') {
-      return daysA - daysB;
+      if (daysA !== daysB) return daysA - daysB;
+      return timeB - timeA;
     }
     if (sortBy === 'expiring_tomorrow') {
-      if (daysA === 1) return -1;
-      if (daysB === 1) return 1;
-      return daysA - daysB;
+      if (daysA === 1 && daysB !== 1) return -1;
+      if (daysB === 1 && daysA !== 1) return 1;
+      if (daysA !== daysB) return daysA - daysB;
+      return timeB - timeA;
     }
     if (sortBy === 'expired') {
       if (daysA < 0 && daysB >= 0) return -1;
       if (daysB < 0 && daysA >= 0) return 1;
-      return daysA - daysB;
+      if (daysA !== daysB) return daysA - daysB;
+      return timeB - timeA;
     }
     if (sortBy === 'name_asc') {
       const nameA = a.name || a.vehicleNumber || '';
       const nameB = b.name || b.vehicleNumber || '';
-      return nameA.localeCompare(nameB);
+      const cmp = nameA.localeCompare(nameB);
+      if (cmp !== 0) return cmp;
+      return timeB - timeA;
     }
     if (sortBy === 'vehicle_asc') {
       const vehA = a.vehicleNumber || '';
       const vehB = b.vehicleNumber || '';
-      return vehA.localeCompare(vehB);
-    }
-    if (sortBy === 'recent') {
-      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      const cmp = vehA.localeCompare(vehB);
+      if (cmp !== 0) return cmp;
       return timeB - timeA;
     }
-    return 0;
+    return timeB - timeA;
   });
 
   // Calculate Pagination for 1,000+ data scaling
@@ -363,10 +431,22 @@ Thank you!`);
       return;
     }
 
+    const normalizedVeh = formData.vehicleNumber.trim().toUpperCase();
+    const isDuplicate = customers.some(c => 
+      (!editingCustomer || c.id !== editingCustomer.id) && 
+      c.vehicleNumber.trim().toUpperCase() === normalizedVeh
+    );
+
+    if (isDuplicate) {
+      setFormError(`This vehicle number is already present (${normalizedVeh})`);
+      alert(`This vehicle number is already present (${normalizedVeh})`);
+      return;
+    }
+
     const payload = {
       name: formData.name.trim() || undefined,
       mobile: formData.mobile.trim(),
-      vehicleNumber: formData.vehicleNumber.trim().toUpperCase(),
+      vehicleNumber: normalizedVeh,
       pucExpiryDate: formData.pucExpiryDate ? formData.pucExpiryDate.trim() : undefined,
       notes: formData.notes ? formData.notes.trim() : undefined
     };
@@ -379,6 +459,9 @@ Thank you!`);
       setSentSuccessNotice(`Saved vehicle record for ${payload.vehicleNumber}`);
     }
 
+    // Bring user to page 1 with recent sort so newly added/updated vehicle is at the very top
+    setCurrentPage(1);
+    setSortBy('recent');
     setIsAddModalOpen(false);
     setFormData({ name: '', mobile: '', vehicleNumber: '', pucExpiryDate: '', notes: '' });
     setTimeout(() => setSentSuccessNotice(null), 4000);
@@ -666,25 +749,25 @@ SP Pollution Testing Centre`);
     <div className="space-y-6">
       
       {/* Persistent Database & Backup Control Bar */}
-      <div className="bg-slate-900 text-white p-4 rounded-2xl border border-slate-700 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-slate-900 text-white p-4 rounded-2xl border border-slate-700 shadow-md flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center text-blue-400 shrink-0">
             <Database className="w-5 h-5 text-blue-400" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-extrabold text-sm text-white">Database Status: Active & Secured</h3>
-              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Persistent Store (No Data Loss)
+              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0 whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span> Persistent Store (No Data Loss)
               </span>
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-slate-400 mt-0.5">
               Your vehicle database ({customers.length} records) is automatically saved and retained locally & on server. Never destroyed on refresh.
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 shrink-0 w-full lg:w-auto">
           {onExportCSV && (
             <button
               onClick={onExportCSV}
@@ -838,9 +921,9 @@ SP Pollution Testing Centre`);
               <span className="text-xs text-slate-400 font-mono">Today: {new Date().toLocaleDateString('en-IN', { dateStyle: 'medium' })}</span>
             </div>
 
-            <h2 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
+            <h2 className="text-lg sm:text-2xl font-extrabold text-white tracking-tight flex flex-wrap items-baseline gap-1.5 sm:gap-2">
               <span>SP Vehicle Messaging</span>
-              <span className="text-xs font-normal text-slate-400">(Govt. Authorized Pollution Centre)</span>
+              <span className="text-xs font-normal text-slate-400 whitespace-nowrap">(Govt. Authorized Pollution Centre)</span>
             </h2>
 
             <p className="text-xs text-slate-300 leading-relaxed">
@@ -851,41 +934,41 @@ SP Pollution Testing Centre`);
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <button
                 onClick={() => setFilterTab('TOMORROW')}
-                className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl border text-[11px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shrink-0 whitespace-nowrap ${
                   filterTab === 'TOMORROW' 
                     ? 'bg-amber-500 text-slate-950 border-amber-400 font-black' 
                     : 'bg-slate-800/80 text-amber-300 border-amber-500/30 hover:bg-slate-700'
                 }`}
               >
-                <Flame className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                <Flame className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />
                 <span>Expiring Tomorrow:</span>
-                <span className="bg-slate-950 text-amber-300 px-2 py-0.2 rounded-full font-mono font-black">{tomorrowCount}</span>
+                <span className="bg-slate-950 text-amber-300 px-2 py-0.5 rounded-full font-mono font-black">{tomorrowCount}</span>
               </button>
 
               <button
                 onClick={() => setFilterTab('TODAY')}
-                className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl border text-[11px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shrink-0 whitespace-nowrap ${
                   filterTab === 'TODAY' 
                     ? 'bg-rose-600 text-white border-rose-500' 
                     : 'bg-slate-800/80 text-rose-300 border-rose-500/30 hover:bg-slate-700'
                 }`}
               >
-                <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                 <span>Expiring Today:</span>
-                <span className="bg-slate-950 text-rose-300 px-2 py-0.2 rounded-full font-mono font-black">{todayCount}</span>
+                <span className="bg-slate-950 text-rose-300 px-2 py-0.5 rounded-full font-mono font-black">{todayCount}</span>
               </button>
 
               <button
                 onClick={() => setFilterTab('EXPIRED')}
-                className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl border text-[11px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shrink-0 whitespace-nowrap ${
                   filterTab === 'EXPIRED' 
                     ? 'bg-rose-900 text-white border-rose-700' 
                     : 'bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700'
                 }`}
               >
-                <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                <ShieldAlert className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                 <span>Expired:</span>
-                <span className="bg-slate-950 text-rose-300 px-2 py-0.2 rounded-full font-mono font-black">{expiredCount}</span>
+                <span className="bg-slate-950 text-rose-300 px-2 py-0.5 rounded-full font-mono font-black">{expiredCount}</span>
               </button>
             </div>
           </div>
@@ -1055,6 +1138,16 @@ SP Pollution Testing Centre`);
             </button>
 
             <button
+              onClick={() => setFilterTab('RECORDED_TODAY')}
+              className={`px-3 py-2 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 ${
+                filterTab === 'RECORDED_TODAY' ? 'bg-emerald-600 text-white font-black' : 'bg-emerald-50 text-emerald-900 border border-emerald-300 hover:bg-emerald-100'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Added Today ({recordedTodayCount})</span>
+            </button>
+
+            <button
               onClick={() => setFilterTab('TOMORROW')}
               className={`px-3 py-2 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 ${
                 filterTab === 'TOMORROW' ? 'bg-amber-500 text-slate-950 font-black' : 'bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100'
@@ -1131,12 +1224,12 @@ SP Pollution Testing Centre`);
               onChange={(e) => setSortBy(e.target.value as any)}
               className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
+              <option value="recent">⚡ Newly Recorded First (Latest on Top)</option>
               <option value="expiring_soonest">Expiring Soonest (Tomorrow / Next Day First)</option>
               <option value="expiring_tomorrow">Expiring Tomorrow First</option>
               <option value="expired">Expired Records First</option>
               <option value="name_asc">Customer Name (A-Z)</option>
               <option value="vehicle_asc">Vehicle Number (A-Z)</option>
-              <option value="recent">Recently Added</option>
             </select>
 
             <button
@@ -1228,6 +1321,7 @@ SP Pollution Testing Centre`);
             {paginatedCustomers.map(c => {
               const isSelected = selectedCustomerIds.includes(c.id);
               const expiry = getExpiryDetails(c.pucExpiryDate);
+              const entryInfo = formatEntryDateTime(c.createdAt);
 
             return (
               <div
@@ -1235,6 +1329,8 @@ SP Pollution Testing Centre`);
                 className={`bg-white rounded-2xl border p-5 shadow-sm transition-all relative flex flex-col justify-between ${
                   isSelected 
                     ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/20' 
+                    : entryInfo.isToday
+                    ? 'border-emerald-400 bg-emerald-50/10 ring-1 ring-emerald-400/30'
                     : expiry.status === 'TOMORROW'
                     ? 'border-amber-400 bg-amber-50/20 ring-1 ring-amber-400/30'
                     : expiry.status === 'TODAY'
@@ -1258,10 +1354,18 @@ SP Pollution Testing Centre`);
                       </button>
 
                       <div>
-                        <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-1.5 font-mono">
-                          <Car className="w-4 h-4 text-blue-600 shrink-0" />
-                          <span className="text-blue-700 font-extrabold tracking-wide">{c.vehicleNumber}</span>
-                        </h3>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-1.5 font-mono">
+                            <Car className="w-4 h-4 text-blue-600 shrink-0" />
+                            <span className="text-blue-700 font-extrabold tracking-wide">{c.vehicleNumber}</span>
+                          </h3>
+                          {entryInfo.isToday && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                              <Sparkles className="w-3 h-3 text-emerald-600 animate-pulse" />
+                              <span>Added Today ({entryInfo.timeStr})</span>
+                            </span>
+                          )}
+                        </div>
                         {c.name && (
                           <p className="text-xs text-slate-600 mt-0.5 flex items-center gap-1 font-medium">
                             <User className="w-3.5 h-3.5 text-slate-400" />
@@ -1289,35 +1393,57 @@ SP Pollution Testing Centre`);
                     </div>
                   </div>
 
-                  {/* PUC Expiry Status Badge */}
+                  {/* PUC Expiry Status Badge & Entry Date Time */}
                   <div className="py-3 space-y-2 text-xs text-slate-600">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500 font-semibold flex items-center gap-1">
-                        <Calendar className="w-3.5 h-3.5 text-slate-400" /> PUC Expiry Date:
+                    
+                    {/* Entry Date and Time Badge */}
+                    {entryInfo.isToday ? (
+                      <div className="flex flex-wrap items-center justify-between gap-1 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 text-xs text-emerald-950">
+                        <span className="flex items-center gap-1 font-extrabold text-emerald-800 text-[11px] shrink-0">
+                          <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> Vehicle Data Entered:
+                        </span>
+                        <span className="font-mono font-black text-emerald-900 text-[11px]">
+                          Today at {entryInfo.timeStr} ({entryInfo.dateStr})
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-1 bg-slate-50 border border-slate-200/80 rounded-lg px-2.5 py-1 text-xs text-slate-700">
+                        <span className="flex items-center gap-1 font-medium text-slate-500 text-[11px] shrink-0">
+                          <Clock className="w-3 h-3 text-slate-400 shrink-0" /> Vehicle Data Entered:
+                        </span>
+                        <span className="font-mono font-bold text-slate-800 text-[11px]">
+                          {entryInfo.formatted}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-1 pt-1">
+                      <span className="text-slate-500 font-semibold flex items-center gap-1 shrink-0">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" /> PUC Expiry Date:
                       </span>
                       <span className="font-mono font-bold text-slate-900">
                         {expiry.formattedDate || 'Not Set'}
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500 font-semibold flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5 text-slate-400" /> Expiry Status:
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className="text-slate-500 font-semibold flex items-center gap-1 shrink-0">
+                        <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" /> Expiry Status:
                       </span>
-                      <span className={`px-2.5 py-0.5 rounded-full border text-[11px] uppercase ${expiry.badgeBg}`}>
+                      <span className={`px-2.5 py-0.5 rounded-full border text-[11px] uppercase shrink-0 ${expiry.badgeBg}`}>
                         {expiry.label}
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between pt-1">
-                      <span className="text-slate-400 flex items-center gap-1">
-                        <Phone className="w-3.5 h-3.5" /> Mobile:
+                    <div className="flex flex-wrap items-center justify-between gap-1 pt-1">
+                      <span className="text-slate-400 flex items-center gap-1 shrink-0">
+                        <Phone className="w-3.5 h-3.5 shrink-0" /> Mobile:
                       </span>
                       <span className="font-mono font-bold text-slate-900">{c.mobile}</span>
                     </div>
 
                     {c.notes && (
-                      <div className="bg-slate-50 p-2 rounded-lg text-[11px] text-slate-600 border border-slate-100 mt-1">
+                      <div className="bg-slate-50 p-2 rounded-lg text-[11px] text-slate-600 border border-slate-100 mt-1 break-words">
                         <span className="font-semibold text-slate-700">Note: </span>
                         {c.notes}
                       </div>

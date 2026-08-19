@@ -4,7 +4,7 @@ import { Footer } from './components/Footer';
 import { CustomerMessagingView } from './components/CustomerMessagingView';
 import { MessageLogsView } from './components/MessageLogsView';
 import { AdminPanelView } from './components/AdminPanelView';
-import { LoginModal } from './components/LoginModal';
+import { LocationGate, LocationData } from './components/LocationGate';
 import { CustomerRecord, MessageLog, DeviceSession, UserAuth } from './types';
 import { 
   getLocalCustomers, 
@@ -26,11 +26,11 @@ import {
   syncBulkCustomersToCloud, 
   saveLogToCloud,
   saveSessionToCloud,
-  updateSessionStatus,
-  updateSessionHeartbeat
+  updateSessionHeartbeat,
+  updateSessionStatus
 } from './firebase';
 
-const AUTH_STORAGE_KEY = 'sp_user_auth_v2';
+const AUTH_STORAGE_KEY = 'sp_admin_auth_v3';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('contacts');
@@ -41,37 +41,44 @@ export default function App() {
   const [logs, setLogs] = useState<MessageLog[]>(() => getLocalLogs());
   const [sessions, setSessions] = useState<DeviceSession[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  
-  // Auth state per device
-  const [userAuth, setUserAuth] = useState<UserAuth | null>(() => {
-    try {
-      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed reading auth state:', e);
-    }
-    // Default guest operator if none set yet
+  const [verifiedLocation, setVerifiedLocation] = useState<LocationData | null>(null);
+
+  // User auth state: Starts as Operator; Admin role can be unlocked with passcode SP@123
+  const [userAuth, setUserAuth] = useState<UserAuth>(() => {
     const deviceId = localStorage.getItem('sp_device_id') || `dev-${Date.now()}`;
     if (!localStorage.getItem('sp_device_id')) {
       localStorage.setItem('sp_device_id', deviceId);
     }
+    const sessionId = localStorage.getItem('sp_current_session_id') || `sess-${Date.now()}`;
+    localStorage.setItem('sp_current_session_id', sessionId);
+
+    try {
+      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...parsed,
+          deviceId,
+          sessionId
+        };
+      }
+    } catch (e) {
+      console.error('Error reading auth state:', e);
+    }
+
     return {
       isLoggedIn: true,
-      operatorName: 'System Administrator',
-      role: 'Admin',
-      sessionId: `sess-init-${Date.now()}`,
+      operatorName: 'Terminal Operator',
+      role: 'Operator',
+      sessionId,
       deviceId
     };
   });
-
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
 
   // Sync auth state to local storage
   useEffect(() => {
     if (userAuth) {
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userAuth));
-    } else {
-      localStorage.removeItem(AUTH_STORAGE_KEY);
     }
   }, [userAuth]);
 
@@ -120,17 +127,26 @@ export default function App() {
       }
     });
 
-    // Subscribe to Device Sessions collection (Multi-device tracking)
+    // Subscribe to Device Sessions collection
     const unsubSessions = subscribeToSessions((cloudSessions) => {
       setSessions(cloudSessions);
 
-      // Check if current device session was terminated remotely by Admin
-      if (userAuth && userAuth.sessionId) {
+      // Real-time remote kick check: If Admin removed / terminated this session remotely
+      if (userAuth.sessionId) {
         const mySession = cloudSessions.find(s => s.id === userAuth.sessionId);
         if (mySession && (mySession.status === 'Terminated' || mySession.status === 'Logged Out')) {
-          console.warn('Session was ended remotely.');
-          setUserAuth(null);
-          setIsLoginModalOpen(true);
+          console.warn('Current session was terminated remotely by Admin.');
+          alert('SECURITY NOTICE: Your terminal session has been removed / terminated by the Administrator.');
+          // Generate new session ID and reset role
+          const newSessionId = `sess-${Date.now()}`;
+          localStorage.setItem('sp_current_session_id', newSessionId);
+          setUserAuth(prev => ({
+            ...prev,
+            role: 'Operator',
+            operatorName: 'Terminal Operator',
+            sessionId: newSessionId
+          }));
+          setActiveTab('contacts');
         }
       }
     });
@@ -140,13 +156,12 @@ export default function App() {
       unsubLogs();
       unsubSessions();
     };
-  }, [userAuth?.sessionId]);
+  }, [userAuth.sessionId]);
 
-  // Register or Heartbeat Current Session in Cloud
+  // Register session with verified GPS location in Cloud Firestore
   useEffect(() => {
-    if (!userAuth || !userAuth.isLoggedIn) return;
+    if (!verifiedLocation) return;
 
-    // Detect browser/device
     const ua = navigator.userAgent;
     let browser = 'Chrome';
     let os = 'Windows';
@@ -163,49 +178,59 @@ export default function App() {
     const currentSession: DeviceSession = {
       id: userAuth.sessionId,
       deviceId: userAuth.deviceId,
-      operatorName: userAuth.operatorName,
+      operatorName: userAuth.role === 'Admin' ? 'Authorized Administrator' : userAuth.operatorName,
       role: userAuth.role,
       deviceName: `${userAuth.role === 'Admin' ? 'Admin' : 'Operator'} Terminal (${os})`,
       browserInfo: `${browser} on ${os}`,
       loginTime: now,
       lastActive: now,
-      status: 'Active'
+      status: 'Active',
+      location: verifiedLocation.locationName,
+      latitude: verifiedLocation.latitude,
+      longitude: verifiedLocation.longitude,
+      ip: verifiedLocation.ip
     };
 
     saveSessionToCloud(currentSession).catch(err => console.error('Failed saving session:', err));
 
-    // Send heartbeat every 30s
     const timer = setInterval(() => {
-      if (userAuth.sessionId) {
-        updateSessionHeartbeat(userAuth.sessionId).catch(() => {});
-      }
+      updateSessionHeartbeat(userAuth.sessionId).catch(() => {});
     }, 30000);
 
     return () => clearInterval(timer);
-  }, [userAuth?.sessionId, userAuth?.operatorName]);
+  }, [verifiedLocation, userAuth.role, userAuth.sessionId]);
 
-  // Handle Login Success
-  const handleLoginSuccess = async (authData: UserAuth, sessionData: DeviceSession) => {
-    setUserAuth(authData);
-    setIsLoginModalOpen(false);
-    try {
-      await saveSessionToCloud(sessionData);
-    } catch (err) {
-      console.error('Error saving session on login:', err);
+  // Admin Passcode Unlock
+  const handleAdminUnlock = (passcode: string): boolean => {
+    if (passcode.trim() === 'SP@123') {
+      setUserAuth(prev => ({
+        ...prev,
+        role: 'Admin',
+        operatorName: 'Authorized Administrator'
+      }));
+      return true;
     }
+    return false;
   };
 
-  // Handle Logout Current Session
+  // Log Out Admin Session
   const handleLogoutCurrentSession = async () => {
-    if (userAuth && userAuth.sessionId) {
+    if (userAuth.sessionId) {
       try {
         await updateSessionStatus(userAuth.sessionId, 'Logged Out');
       } catch (err) {
-        console.error('Error logging out session:', err);
+        console.error('Error logging out:', err);
       }
     }
-    setUserAuth(null);
-    setIsLoginModalOpen(true);
+    const newSessionId = `sess-${Date.now()}`;
+    localStorage.setItem('sp_current_session_id', newSessionId);
+    setUserAuth(prev => ({
+      ...prev,
+      role: 'Operator',
+      operatorName: 'Terminal Operator',
+      sessionId: newSessionId
+    }));
+    setActiveTab('contacts');
   };
 
   // Add Customer Vehicle Record (New records added stay at the top!)
@@ -246,20 +271,19 @@ export default function App() {
     }
 
     let updatedRecord: CustomerRecord | null = null;
-    setCustomers(prev => prev.map(c => {
-      if (c.id === id) {
-        updatedRecord = {
-          ...c,
-          name: updatedCust.name !== undefined ? (updatedCust.name ? updatedCust.name.trim() : undefined) : c.name,
-          mobile: updatedCust.mobile.replace(/[^0-9]/g, ''),
-          vehicleNumber: normalizedVeh,
-          pucExpiryDate: updatedCust.pucExpiryDate !== undefined ? updatedCust.pucExpiryDate.trim() : c.pucExpiryDate,
-          notes: updatedCust.notes !== undefined ? updatedCust.notes.trim() : c.notes
-        };
-        return updatedRecord;
-      }
-      return c;
-    }));
+    const existing = customers.find(c => c.id === id);
+    if (existing) {
+      updatedRecord = {
+        ...existing,
+        name: updatedCust.name !== undefined ? (updatedCust.name ? updatedCust.name.trim() : undefined) : existing.name,
+        mobile: updatedCust.mobile.replace(/[^0-9]/g, ''),
+        vehicleNumber: normalizedVeh,
+        pucExpiryDate: updatedCust.pucExpiryDate !== undefined ? updatedCust.pucExpiryDate.trim() : existing.pucExpiryDate,
+        notes: updatedCust.notes !== undefined ? updatedCust.notes.trim() : existing.notes,
+        createdAt: new Date().toISOString()
+      };
+      setCustomers(prev => [updatedRecord!, ...prev.filter(c => c.id !== id)]);
+    }
 
     if (updatedRecord) {
       try {
@@ -378,95 +402,67 @@ export default function App() {
     return result;
   };
 
-  const handleAdminUnlock = (passcode: string): boolean => {
-    const trimmed = passcode.trim();
-    if (trimmed === 'SP@123') {
-      const deviceId = userAuth?.deviceId || localStorage.getItem('sp_device_id') || `dev-${Date.now()}`;
-      const updatedAuth: UserAuth = {
-        isLoggedIn: true,
-        operatorName: userAuth?.operatorName && userAuth.operatorName !== 'Nayapalli Counter Operator' ? userAuth.operatorName : 'Authorized Administrator',
-        role: 'Admin',
-        sessionId: userAuth?.sessionId || `sess-admin-${Date.now()}`,
-        deviceId
-      };
-      setUserAuth(updatedAuth);
-      return true;
-    }
-    return false;
-  };
-
   const activeDeviceCount = sessions.filter(s => s.status === 'Active').length || 1;
-  const activeOperatorCount = sessions.filter(s => s.status === 'Active' && s.role === 'Operator').length || 1;
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 font-sans flex flex-col selection:bg-blue-600 selection:text-white">
-      
-      {/* Navbar */}
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        contactCount={customers.length}
-        logCount={logs.length}
-        activeDeviceCount={activeDeviceCount}
-        activeOperatorCount={activeDeviceCount}
-        userAuth={userAuth}
-        onOpenLogin={() => setIsLoginModalOpen(true)}
-      />
+    <LocationGate onLocationVerified={(loc) => setVerifiedLocation(loc)}>
+      <div className="min-h-screen bg-slate-100 text-slate-900 font-sans flex flex-col selection:bg-blue-600 selection:text-white">
+        
+        {/* Navbar */}
+        <Navbar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          contactCount={customers.length}
+          logCount={logs.length}
+          activeDeviceCount={activeDeviceCount}
+          userLocation={verifiedLocation}
+          userAuth={userAuth}
+          onOpenAdmin={() => setActiveTab('admin')}
+        />
 
-      {/* Login Modal */}
-      <LoginModal
-        isOpen={isLoginModalOpen}
-        onLoginSuccess={handleLoginSuccess}
-        onCancel={userAuth ? () => setIsLoginModalOpen(false) : undefined}
-        activeSessions={sessions}
-      />
+        {/* Main Container */}
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          {activeTab === 'contacts' && (
+            <CustomerMessagingView
+              customers={customers}
+              onAddCustomer={handleAddCustomer}
+              onUpdateCustomer={handleUpdateCustomer}
+              onDeleteCustomer={handleDeleteCustomer}
+              onSendMessage={handleSendMessage}
+              onExportBackup={exportBackupJSON}
+              onImportBackup={handleImportDatabase}
+              onExportCSV={exportBackupCSV}
+              onImportCSV={handleImportCSV}
+              onGenerateBatch={handleGenerateBatch}
+              isLoading={isLoading}
+            />
+          )}
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'contacts' && (
-          <CustomerMessagingView
-            customers={customers}
-            onAddCustomer={handleAddCustomer}
-            onUpdateCustomer={handleUpdateCustomer}
-            onDeleteCustomer={handleDeleteCustomer}
-            onSendMessage={handleSendMessage}
-            onExportBackup={exportBackupJSON}
-            onImportBackup={handleImportDatabase}
-            onExportCSV={exportBackupCSV}
-            onImportCSV={handleImportCSV}
-            onGenerateBatch={handleGenerateBatch}
-            isLoading={isLoading}
-          />
-        )}
+          {activeTab === 'logs' && (
+            <MessageLogsView
+              logs={logs}
+              onClearLogs={handleClearLogs}
+              onResendMessage={handleResendMessage}
+            />
+          )}
 
-        {activeTab === 'logs' && (
-          <MessageLogsView
-            logs={logs}
-            onClearLogs={handleClearLogs}
-            onResendMessage={handleResendMessage}
-          />
-        )}
+          {activeTab === 'admin' && (
+            <AdminPanelView
+              sessions={sessions}
+              currentAuth={userAuth}
+              onLogoutCurrentSession={handleLogoutCurrentSession}
+              onAdminLogin={handleAdminUnlock}
+            />
+          )}
+        </main>
 
-        {activeTab === 'admin' && (
-          <AdminPanelView
-            sessions={sessions}
-            currentAuth={userAuth || {
-              isLoggedIn: false,
-              operatorName: 'Guest Operator',
-              role: 'Operator',
-              sessionId: '',
-              deviceId: ''
-            }}
-            onLogoutCurrentSession={handleLogoutCurrentSession}
-            onAdminLogin={handleAdminUnlock}
-          />
-        )}
-      </main>
+        {/* Footer */}
+        <Footer />
 
-      {/* Footer */}
-      <Footer />
-
-    </div>
+      </div>
+    </LocationGate>
   );
 }
+
+
 

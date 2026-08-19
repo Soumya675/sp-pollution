@@ -30,6 +30,10 @@ export interface DeviceSession {
   lastActive: string;
   status: 'Active' | 'Logged Out' | 'Terminated';
   logoutTime?: string;
+  location?: string;
+  latitude?: number;
+  longitude?: number;
+  ip?: string;
 }
 
 export interface UserAuth {

@@ -14,7 +14,9 @@ import {
   Activity,
   Trash2,
   Lock,
-  UserX
+  UserX,
+  MapPin,
+  Globe
 } from 'lucide-react';
 import { DeviceSession, UserAuth } from '../types';
 import { updateSessionStatus, deleteSessionFromCloud, clearInactiveSessionsFromCloud, clearAllSessionsFromCloud } from '../firebase';
@@ -433,21 +435,22 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
 
         {/* Device Sessions Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full min-w-[780px] text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-extrabold uppercase text-[10px] tracking-wider">
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4">Operator Name & Session ID</th>
-                <th className="py-3 px-4">Device & Browser</th>
-                <th className="py-3 px-4">Login Time</th>
-                <th className="py-3 px-4">Last Active</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4 whitespace-nowrap">Status</th>
+                <th className="py-3 px-4 whitespace-nowrap">Operator Name & Session ID</th>
+                <th className="py-3 px-4 whitespace-nowrap">User Location</th>
+                <th className="py-3 px-4 whitespace-nowrap">Device & Browser</th>
+                <th className="py-3 px-4 whitespace-nowrap">Login Time</th>
+                <th className="py-3 px-4 whitespace-nowrap">Last Active</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
               {filteredSessions.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-slate-400">
+                  <td colSpan={7} className="text-center py-12 text-slate-400">
                     <Laptop className="w-10 h-10 mx-auto text-slate-300 mb-2" />
                     <p className="font-bold text-sm">No device sessions found for this filter.</p>
                   </td>
@@ -498,6 +501,39 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
                             ID: {s.id.length > 15 ? s.id.substring(0, 14) + '...' : s.id}
                           </span>
                         </div>
+                      </td>
+
+                      {/* Location Column */}
+                      <td className="py-3.5 px-4">
+                        {s.location ? (
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                              <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                              <span className="truncate max-w-[180px]" title={s.location}>{s.location}</span>
+                            </div>
+                            {s.latitude !== undefined && s.longitude !== undefined && (
+                              <a
+                                href={`https://www.google.com/maps?q=${s.latitude},${s.longitude}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] text-blue-600 hover:underline flex items-center gap-1 font-mono font-medium"
+                              >
+                                <span>{s.latitude.toFixed(4)}, {s.longitude.toFixed(4)}</span>
+                                <span className="text-[9px] bg-blue-50 text-blue-700 px-1 rounded border border-blue-200">Map ↗</span>
+                              </a>
+                            )}
+                            {s.ip && (
+                              <div className="text-[9px] text-slate-400 font-mono">
+                                IP: {s.ip}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-slate-400 italic text-[11px]">
+                            <Globe className="w-3.5 h-3.5 text-slate-300" />
+                            <span>Location registering...</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Device & Browser */}

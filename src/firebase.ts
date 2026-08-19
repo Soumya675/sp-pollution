@@ -80,7 +80,11 @@ export function subscribeToSessions(
           loginTime: data.loginTime || new Date().toISOString(),
           lastActive: data.lastActive || new Date().toISOString(),
           status: data.status || 'Active',
-          logoutTime: data.logoutTime
+          logoutTime: data.logoutTime,
+          location: data.location || undefined,
+          latitude: data.latitude !== undefined ? data.latitude : undefined,
+          longitude: data.longitude !== undefined ? data.longitude : undefined,
+          ip: data.ip || undefined
         });
       });
       // Sort sessions descending by loginTime (newest sessions first)
@@ -97,7 +101,7 @@ export function subscribeToSessions(
 // Save or Update Device Session
 export async function saveSessionToCloud(session: DeviceSession): Promise<void> {
   const docRef = doc(db, SESSIONS_COLLECTION, session.id);
-  await setDoc(docRef, {
+  const payload: any = {
     id: session.id,
     deviceId: session.deviceId,
     operatorName: session.operatorName,
@@ -109,7 +113,13 @@ export async function saveSessionToCloud(session: DeviceSession): Promise<void> 
     status: session.status,
     logoutTime: session.logoutTime || null,
     updatedAt: new Date().toISOString()
-  }, { merge: true });
+  };
+  if (session.location) payload.location = session.location;
+  if (session.latitude !== undefined) payload.latitude = session.latitude;
+  if (session.longitude !== undefined) payload.longitude = session.longitude;
+  if (session.ip) payload.ip = session.ip;
+
+  await setDoc(docRef, payload, { merge: true });
 }
 
 // Update Session Status (e.g., Logged Out or Terminated by Admin)
